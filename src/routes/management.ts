@@ -5,21 +5,27 @@ import type { BrowserStatus, LoginState } from '../browser/manager.js';
 import type { BrowserStateImportPayload, BrowserStateImportResult } from '../browser/manager.js';
 import type { MetricsCollector } from '../core/metrics.js';
 import type { ErrorNotifier } from '../core/error-notifier.js';
+import { buildTelegramSettingsView } from '../core/error-notifier.js';
+import {
+  discoverTelegramChatIds,
+  parseTelegramProxyFromBody,
+  resolveTelegramToken,
+  verifyTelegramBotToken,
+} from '../core/telegram-bot-api.js';
+import type { TelegramSettings } from '../core/runtime-settings.js';
 import { getAutoModelOrder, resetAutoModelOrder, setAutoModelOrder } from '../core/auto-model-order.js';
 import { loadRuntimeSettings, saveRuntimeSettings } from '../core/runtime-settings.js';
+import { PROVIDER_SESSION_SPECS } from '../session/import-config.js';
+import { defaultImportsSourceDir, findImportCandidates, persistImportRawFile, resolveImportPersistFilename, type ImportPersistKind } from '../session/import.js';
+import { tailLogFile } from '../core/logger.js';
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 // ======Settings=========
 const SERVICE_NAME = 'web-to-api.service';
 const SERVICE_LOG_LINES = 160;
-const PROVIDER_IMPORTS: Array<{ providerId: string; files: string[]; origin: string }> = [
-  { providerId: 'deepseek-web', files: ['deepseek-state.json'], origin: 'https://chat.deepseek.com' },
-  { providerId: 'kimi-web', files: ['kimi-state.json', 'kimi.json'], origin: 'https://www.kimi.com' },
-  { providerId: 'qwen-web', files: ['qwen-state.json', 'qwen.json'], origin: 'https://chat.qwen.ai' },
-];
 // ======Settings=========
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +41,8 @@ export interface ManagementDeps {
   metrics?: MetricsCollector;
   errorNotifier?: ErrorNotifier | null;
   stateDir?: string;
+  logFilePath?: string;
+  reloadTelegramNotifier?: () => void;
 }
 
 export function managementRoutes(deps: ManagementDeps): Hono {
@@ -117,44 +125,61 @@ export function managementRoutes(deps: ManagementDeps): Hono {
     return c.json({ testedAt: new Date().toISOString(), results });
   });
 
+  app.get('/admin/imports', async (c) => {
+    const dir = deps.stateDir ? defaultImportsSourceDir(deps.stateDir) : null;
+    return c.json({
+      importsDir: dir,
+      providers: PROVIDER_SESSION_SPECS,
+    });
+  });
+
   app.post('/admin/auth/refresh-all', async (c) => {
     if (!deps.importBrowserState || !deps.stateDir) {
       return c.json({ error: 'Refresh not possible', message: 'Browser state or state dir not configured.' }, 503);
     }
 
-    const sourceDir = deps.stateDir;
-    const results: any[] = [];
+    const sourceDir = defaultImportsSourceDir(deps.stateDir);
+    const candidates = findImportCandidates(sourceDir);
 
-    for (const provider of PROVIDER_IMPORTS) {
-      let found = false;
-      for (const fileName of provider.files) {
-        const filePath = join(sourceDir, fileName);
-        if (!existsSync(filePath)) continue;
+    if (candidates.length === 0) {
+      return c.json({
+        status: 'no_files',
+        importsDir: sourceDir,
+        message: `No session JSON in ${sourceDir}. Use Session Import or copy files there.`,
+        results: [],
+      });
+    }
 
-        try {
-          const state = normalizeStateFile(filePath, provider.origin);
-          const result = await deps.importBrowserState(state);
-          authStore.setStatus(provider.providerId, 'active');
-          results.push({ providerId: provider.providerId, file: fileName, ...result });
-          found = true;
-          break;
-        } catch (err) {
-          results.push({ providerId: provider.providerId, file: fileName, error: (err as Error).message });
-        }
-      }
-      if (!found) {
-        results.push({ providerId: provider.providerId, status: 'skipped', message: 'No state files found' });
+    const results = [];
+    for (const candidate of candidates) {
+      try {
+        const detail = await deps.importBrowserState(candidate.state);
+        authStore.setStatus(candidate.providerId, 'active');
+        results.push({
+          providerId: candidate.providerId,
+          file: candidate.fileName,
+          status: 'imported',
+          detail,
+        });
+      } catch (err) {
+        results.push({
+          providerId: candidate.providerId,
+          file: candidate.fileName,
+          status: 'error',
+          error: (err as Error).message,
+        });
       }
     }
 
-    return c.json({ status: 'completed', results });
+    return c.json({ status: 'completed', importsDir: sourceDir, results });
   });
 
   app.post('/admin/notify/test', async (c) => {
-    if (!deps.errorNotifier) {
+    const notifier = deps.errorNotifier;
+    if (!notifier) {
       return c.json({ status: 'disabled', message: 'Telegram notifier is not configured.' }, 503);
     }
-    await deps.errorNotifier.notify({
+    await notifier.notify({
       route: '/admin/notify/test',
       status: 200,
       message: `Dashboard test notification ${new Date().toISOString()}`,
@@ -163,11 +188,149 @@ export function managementRoutes(deps: ManagementDeps): Hono {
   });
 
   app.get('/admin/settings', async (c) => {
+    const persisted = deps.stateDir ? loadRuntimeSettings(deps.stateDir) : {};
     return c.json({
       autoModelOrder: getAutoModelOrder(),
-      persisted: deps.stateDir ? loadRuntimeSettings(deps.stateDir) : {},
+      persisted: {
+        autoModelOrder: persisted.autoModelOrder,
+      },
+      telegram: buildTelegramSettingsView(persisted.telegram),
       serviceName: SERVICE_NAME,
     });
+  });
+
+  app.post('/admin/settings/telegram', async (c) => {
+    if (!deps.stateDir) {
+      return c.json({ error: 'No state dir', message: 'Telegram settings require state directory.' }, 503);
+    }
+
+    let body: {
+      botToken?: string;
+      chatId?: string;
+      proxyServer?: string;
+      proxyUser?: string;
+      proxyPass?: string;
+    };
+    try {
+      body = await c.req.json<typeof body>();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const current = loadRuntimeSettings(deps.stateDir);
+    const telegram: TelegramSettings = { ...(current.telegram || {}) };
+
+    if (body.chatId !== undefined) {
+      telegram.chatId = String(body.chatId).trim();
+    }
+    if (body.botToken !== undefined) {
+      const token = String(body.botToken).trim();
+      if (token) telegram.botToken = token;
+    }
+    const proxyParsed = parseTelegramProxyFromBody(body, telegram.proxy);
+    if (proxyParsed !== undefined) {
+      if (proxyParsed === null) {
+        delete telegram.proxy;
+      } else {
+        telegram.proxy = proxyParsed;
+      }
+    }
+
+    if (!telegram.botToken || !telegram.chatId) {
+      return c.json({
+        error: 'Incomplete telegram settings',
+        message: 'botToken and chatId are required.',
+      }, 400);
+    }
+
+    saveRuntimeSettings(deps.stateDir, { ...current, telegram });
+    deps.reloadTelegramNotifier?.();
+
+    const view = buildTelegramSettingsView(telegram);
+    return c.json({
+      status: 'saved',
+      telegram: view,
+      message: view.configured ? 'Telegram notifier updated.' : 'Saved, but notifier is still incomplete.',
+    });
+  });
+
+  app.post('/admin/telegram/verify-token', async (c) => {
+    if (!deps.stateDir) {
+      return c.json({ error: 'No state dir' }, 503);
+    }
+    let body: {
+      botToken?: string;
+      proxyServer?: string;
+      proxyUser?: string;
+      proxyPass?: string;
+    };
+    try {
+      body = await c.req.json<typeof body>();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const settings = resolveTelegramDraftSettings(deps.stateDir, body);
+    const token = resolveTelegramToken(body.botToken, settings);
+    if (!token) {
+      return c.json({ error: 'Missing token', message: 'Provide botToken or save it first.' }, 400);
+    }
+
+    try {
+      const bot = await verifyTelegramBotToken(token, settings);
+      const view = buildTelegramSettingsView(settings);
+      return c.json({
+        status: 'ok',
+        bot,
+        proxyLabel: view.proxy?.label ?? 'direct (api.telegram.org)',
+      });
+    } catch (err) {
+      return c.json({ error: 'Verify failed', message: (err as Error).message }, 400);
+    }
+  });
+
+  app.post('/admin/telegram/discover-chats', async (c) => {
+    if (!deps.stateDir) {
+      return c.json({ error: 'No state dir' }, 503);
+    }
+    let body: {
+      botToken?: string;
+      proxyServer?: string;
+      proxyUser?: string;
+      proxyPass?: string;
+    };
+    try {
+      body = await c.req.json<typeof body>();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const settings = resolveTelegramDraftSettings(deps.stateDir, body);
+    const token = resolveTelegramToken(body.botToken, settings);
+    if (!token) {
+      return c.json({ error: 'Missing token', message: 'Verify bot token first.' }, 400);
+    }
+
+    try {
+      await verifyTelegramBotToken(token, settings);
+    } catch (err) {
+      return c.json({ error: 'Token invalid', message: (err as Error).message }, 400);
+    }
+
+    try {
+      const { chats, consumedUpdates } = await discoverTelegramChatIds(token, settings);
+      if (chats.length === 0) {
+        return c.json({
+          status: 'empty',
+          chats: [],
+          message: 'No messages yet. Open your bot in Telegram, send any message (e.g. /start), then try again.',
+          consumedUpdates,
+        });
+      }
+      return c.json({ status: 'ok', chats, consumedUpdates });
+    } catch (err) {
+      return c.json({ error: 'Discover failed', message: (err as Error).message }, 400);
+    }
   });
 
   app.post('/admin/settings/auto-order', async (c) => {
@@ -197,21 +360,8 @@ export function managementRoutes(deps: ManagementDeps): Hono {
 
   app.get('/admin/service/logs', async (c) => {
     const lines = Math.min(Math.max(parseInt(c.req.query('lines') ?? String(SERVICE_LOG_LINES), 10) || SERVICE_LOG_LINES, 20), 500);
-    try {
-      const { stdout } = await execFileAsync('journalctl', [
-        '--user',
-        '-u',
-        SERVICE_NAME,
-        '-n',
-        String(lines),
-        '--no-pager',
-        '--output',
-        'short-iso',
-      ], { timeout: 5000, maxBuffer: 256 * 1024 });
-      return c.json({ service: SERVICE_NAME, logs: stdout });
-    } catch (err) {
-      return c.json({ error: 'Log read failed', message: (err as Error).message }, 500);
-    }
+    const logResult = await readServiceLogs(deps, lines);
+    return c.json(logResult);
   });
 
   app.post('/admin/service/restart', async (c) => {
@@ -287,9 +437,15 @@ export function managementRoutes(deps: ManagementDeps): Hono {
       return c.json({ error: 'Browser not available', message: 'Browser state import is not configured.' }, 503);
     }
 
-    let body: { providerId?: string; state?: BrowserStateImportPayload };
+    let body: {
+      providerId?: string;
+      state?: BrowserStateImportPayload;
+      raw?: unknown;
+      persistKind?: ImportPersistKind;
+      persistFile?: string;
+    };
     try {
-      body = await c.req.json<{ providerId?: string; state?: BrowserStateImportPayload }>();
+      body = await c.req.json<typeof body>();
     } catch {
       return c.json({ error: 'Invalid JSON body' }, 400);
     }
@@ -299,11 +455,25 @@ export function managementRoutes(deps: ManagementDeps): Hono {
     }
 
     try {
+      let savedTo: string | null = null;
+      if (deps.stateDir && body.providerId) {
+        const fileName = body.persistFile
+          ?? (body.persistKind ? resolveImportPersistFilename(body.providerId, body.persistKind) : null);
+        if (fileName && body.raw !== undefined) {
+          savedTo = persistImportRawFile(deps.stateDir, fileName, body.raw);
+        }
+      }
+
       const result = await deps.importBrowserState(body.state);
       if (body.providerId) {
         authStore.setStatus(body.providerId, 'active');
       }
-      return c.json({ status: 'imported', providerId: body.providerId ?? null, ...result });
+      return c.json({
+        status: 'imported',
+        providerId: body.providerId ?? null,
+        savedTo,
+        ...result,
+      });
     } catch (err) {
       return c.json({ error: 'Import failed', message: (err as Error).message }, 500);
     }
@@ -336,6 +506,29 @@ export function managementRoutes(deps: ManagementDeps): Hono {
   return app;
 }
 
+function resolveTelegramDraftSettings(
+  stateDir: string,
+  body: {
+    botToken?: string;
+    proxyServer?: string;
+    proxyUser?: string;
+    proxyPass?: string;
+  },
+): TelegramSettings | undefined {
+  const persisted = loadRuntimeSettings(stateDir).telegram || {};
+  const draft: TelegramSettings = { ...persisted };
+  if (body.botToken?.trim()) draft.botToken = body.botToken.trim();
+  const proxyParsed = parseTelegramProxyFromBody(body, persisted.proxy);
+  if (proxyParsed !== undefined) {
+    if (proxyParsed === null) {
+      delete draft.proxy;
+    } else {
+      draft.proxy = proxyParsed;
+    }
+  }
+  return draft;
+}
+
 function persistAutoModelOrder(stateDir: string | undefined): void {
   if (!stateDir) return;
   const current = loadRuntimeSettings(stateDir);
@@ -345,52 +538,73 @@ function persistAutoModelOrder(stateDir: string | undefined): void {
   });
 }
 
-// ─── Cookie/State Helpers ───
-
-function normalizeStateFile(filePath: string, fallbackOrigin: string): BrowserStateImportPayload {
-  const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-
-  if (Array.isArray(parsed)) {
-    return { origin: fallbackOrigin, cookies: parsed };
+async function readServiceLogs(
+  deps: ManagementDeps,
+  lines: number,
+): Promise<{ service?: string; source: string; logs: string }> {
+  if (deps.logFilePath && existsSync(deps.logFilePath)) {
+    const logs = tailLogFile(deps.logFilePath, lines);
+    if (logs.trim()) {
+      return { source: deps.logFilePath, logs };
+    }
   }
 
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Unsupported state file format: ${filePath}`);
+  if (deps.stateDir) {
+    const logsDir = join(deps.stateDir, 'logs');
+    if (existsSync(logsDir)) {
+      const files = readdirSync(logsDir)
+        .filter(name => name.endsWith('.log'))
+        .map(name => join(logsDir, name))
+        .filter(path => existsSync(path));
+      if (files.length > 0) {
+        const latest = files.sort().at(-1)!;
+        const logs = tailLogFile(latest, lines);
+        if (logs.trim()) {
+          return { source: latest, logs };
+        }
+      }
+    }
   }
 
-  if (Array.isArray(parsed.cookies) && Array.isArray(parsed.origins)) {
-    return normalizePlaywrightStorageState(parsed as any, fallbackOrigin);
+  try {
+    const { stdout } = await execFileAsync('journalctl', [
+      '--user',
+      '-u',
+      SERVICE_NAME,
+      '-n',
+      String(lines),
+      '--no-pager',
+      '--output',
+      'short-iso',
+    ], { timeout: 5000, maxBuffer: 256 * 1024 });
+    const trimmed = stdout.trim();
+    if (trimmed && !trimmed.includes('-- No entries --')) {
+      return { service: SERVICE_NAME, source: 'journalctl', logs: stdout };
+    }
+  } catch {
+    // fall through
   }
 
+  if (deps.metrics) {
+    const recent = deps.metrics.getRecent(lines);
+    if (recent.length > 0) {
+      const text = recent.map(entry => {
+        const ts = new Date(entry.timestamp).toISOString();
+        const err = entry.errorCode ? ` error=${entry.errorCode}` : '';
+        return `${ts} ${entry.provider} ${entry.model} ${entry.status} ${entry.latencyMs}ms${err}`;
+      }).join('\n');
+      return { source: 'request-metrics', logs: text };
+    }
+  }
+
+  const logHint = deps.logFilePath ?? join(deps.stateDir ?? '~/.web-to-api', 'logs', 'server.log');
   return {
-    url: typeof parsed.url === 'string' ? parsed.url : undefined,
-    origin: typeof parsed.origin === 'string' ? parsed.origin : fallbackOrigin,
-    localStorage: normalizeRecord((parsed as any).localStorage),
-    sessionStorage: normalizeRecord((parsed as any).sessionStorage),
-    cookies: typeof (parsed as any).cookies === 'string' || Array.isArray((parsed as any).cookies)
-      ? (parsed as any).cookies
-      : undefined,
+    source: 'none',
+    logs: [
+      'Log file is empty or not created yet.',
+      `Expected path: ${logHint}`,
+      '',
+      'Restart the server — logs are written on startup.',
+    ].join('\n'),
   };
-}
-
-function normalizePlaywrightStorageState(state: any, fallbackOrigin: string): BrowserStateImportPayload {
-  const matchedOrigin = state.origins.find((entry: any) => entry.origin === fallbackOrigin) || state.origins[0];
-  const localStorage = Object.fromEntries(
-    (matchedOrigin?.localStorage || [])
-      .filter((entry: any) => typeof entry?.name === 'string')
-      .map((entry: any) => [entry.name, String(entry.value ?? '')]),
-  );
-
-  return {
-    origin: matchedOrigin?.origin || fallbackOrigin,
-    localStorage,
-    cookies: state.cookies,
-  };
-}
-
-function normalizeRecord(value: unknown): Record<string, string> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, String(val ?? '')]),
-  );
 }

@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { platform, arch, release } from 'node:os';
 import chalk from 'chalk';
+import { defaultStateDir } from './config/paths.js';
 
 interface CheckResult {
   name: string;
@@ -76,12 +78,17 @@ export async function runDoctor(): Promise<CheckResult[]> {
   results.push({ name: 'Default Port', status: 'ok', message: '3456 (will auto-find if busy)' });
 
   // 6. Data directory
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  const stateDir = `${homeDir}/.web-to-api`;
+  const stateDir = defaultStateDir();
+  const importsPath = join(stateDir, 'imports');
   results.push({
     name: 'Data Directory',
     status: 'ok',
     message: stateDir,
+  });
+  results.push({
+    name: 'Session Imports',
+    status: 'ok',
+    message: importsPath,
   });
 
   return results;

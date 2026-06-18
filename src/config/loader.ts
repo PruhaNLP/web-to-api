@@ -94,7 +94,7 @@ export function loadConfig(opts: LoadOptions): BridgeConfig {
 
   // Re-resolve log path relative to stateDir after YAML merge
   if (config.logging.file === defaultConfig('__placeholder__').logging.file) {
-    config.logging.file = join(opts.stateDir, 'logs', 'bridge.log');
+    config.logging.file = join(opts.stateDir, 'logs', 'server.log');
   }
 
   normalizeBrowserProxy(config.browser);
@@ -118,6 +118,7 @@ export function loadConfig(opts: LoadOptions): BridgeConfig {
   if (process.env.WTA_HOST) config.server.host = process.env.WTA_HOST;
   if (process.env.WTA_AUTH_TOKEN) config.server.authToken = process.env.WTA_AUTH_TOKEN;
   if (process.env.WTA_LOG_LEVEL) config.logging.level = process.env.WTA_LOG_LEVEL as any;
+  if (process.env.WTA_LOG_FILE) config.logging.file = process.env.WTA_LOG_FILE;
   if (process.env.WTA_STATE_DIR) {
     const stateFromEnv = process.env.WTA_STATE_DIR;
     config.logging.file = join(stateFromEnv, 'logs', 'server.log');

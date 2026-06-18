@@ -47,8 +47,7 @@ export class QwenProvider extends BaseProvider {
   }
 
   async isAuthenticated(): Promise<boolean> {
-    if (this.authStore.getStatus(this.info.id).status === 'active') return true;
-    return Boolean(this.getPage);
+    return this.authStore.getStatus(this.info.id).status === 'active';
   }
 
   async detectLoginComplete(): Promise<boolean> {

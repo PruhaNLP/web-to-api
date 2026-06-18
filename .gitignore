@@ -6,10 +6,17 @@ dist/
 # Runtime state — never commit
 .web-to-api/
 web-to-api/
+**/imports/
 *-state.json
-deepseek.json
-kimi.json
-qwen.json
+*-state.json.*
+deepseek*.json
+kimi*.json
+qwen*.json
+!src/providers/deepseek/
+!src/providers/kimi-web/
+!src/providers/qwen-web/
+chrome-profile/
+**/chrome-profile/
 
 # Local env
 .env

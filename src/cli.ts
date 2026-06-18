@@ -5,7 +5,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './server.js';
 import { loadConfig } from './config/loader.js';
 import { toChromeProxyArg, proxyDisplayLabel, type ProxySettings } from './config/proxy.js';
-import { defaultChromeProfileDir, isSnapChromiumProfileBlocked } from './config/paths.js';
+import { defaultChromeProfileDir, defaultStateDir, ensureStateLayout, isSnapChromiumProfileBlocked } from './config/paths.js';
 import { ProviderRegistry } from './core/registry.js';
 import { AuthStore } from './auth/store.js';
 import { BrowserManager } from './browser/manager.js';
@@ -14,14 +14,21 @@ import { KimiProvider } from './providers/kimi-web/index.js';
 import { QwenProvider } from './providers/qwen-web/index.js';
 import type { BaseProvider } from './core/provider.js';
 import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { runDoctor, printDoctorResults, findChromePath } from './doctor.js';
-import { createTelegramErrorNotifierFromEnv } from './core/error-notifier.js';
+import { createTelegramErrorNotifier, mergeTelegramSettings, MutableErrorNotifier } from './core/error-notifier.js';
 import { setAutoModelOrder } from './core/auto-model-order.js';
 import { loadRuntimeSettings } from './core/runtime-settings.js';
+import { defaultImportsSourceDir, findImportCandidates, importSessionsFromDir } from './session/import.js';
+import { initFileLogger, getLogFilePath } from './core/logger.js';
+
+const PKG = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
+) as { name: string; version: string };
 
 // ======Settings=========
 const DEFAULT_SERVICE_NAME = 'web-to-api';
@@ -36,7 +43,7 @@ const PROVIDER_MAP: Record<string, new (auth: AuthStore, fetch?: (url: string, i
   'qwen-web': QwenProvider,
 };
 
-const DEFAULT_STATE_DIR = join(homedir(), '.web-to-api');
+const DEFAULT_STATE_DIR = defaultStateDir();
 
 // ─── Helpers ───
 
@@ -130,9 +137,9 @@ function getChromeCommand(port: number, profileDir: string, proxy?: ProxySetting
 // ─── Main ───
 
 program
-  .name('web-to-api')
-  .description('OpenAI-compatible API server for free web AI models')
-  .version('1.0.0')
+  .name(PKG.name)
+  .description('Turn free web AI chat sessions into a local OpenAI-compatible API')
+  .version(PKG.version)
   .option('-p, --port <port>', 'listen port', parseInt)
   .option('--host <host>', 'bind address')
   .option('--auth-token <token>', 'require Bearer token for API access')
@@ -150,7 +157,9 @@ program
     console.log('');
 
     const stateDir = opts.stateDir;
-    mkdirSync(stateDir, { recursive: true });
+    const layout = ensureStateLayout(stateDir);
+    console.log(chalk.green('  ✓') + ` State: ${chalk.cyan(layout.stateDir)}`);
+    console.log(chalk.green('  ✓') + ` Session imports: ${chalk.cyan(layout.importsDir)}`);
 
     // ── Step 1: Environment check ──
     const doctorResults = await runDoctor();
@@ -176,6 +185,9 @@ program
       proxyPass: opts.proxyPass,
     });
 
+    const logFile = initFileLogger(config.logging.file, config.logging.level);
+    console.log(chalk.green('  ✓') + ` Logs: ${chalk.cyan(logFile)}`);
+
     const proxy = config.browser.proxy;
     const runtimeSettings = loadRuntimeSettings(stateDir);
     if (runtimeSettings.autoModelOrder?.length) {
@@ -197,7 +209,7 @@ program
     const cdpPort = parseInt(new URL(opts.cdpUrl).port, 10) || 9222;
     const cdpUrl = opts.cdpUrl;
     // Chrome profile: custom > config > default
-    const chromeProfileDir = opts.chromeProfile ?? config.browser.profileDir ?? join(stateDir, 'chrome-profile');
+    const chromeProfileDir = opts.chromeProfile ?? config.browser.profileDir ?? defaultChromeProfileDir();
 
     if (isSnapChromiumProfileBlocked(chromeProfileDir)) {
       console.log(chalk.yellow('  ⚠ Snap Chromium cannot use profile inside a dot-folder in $HOME'));
@@ -321,13 +333,46 @@ program
       }
     }
 
+    // ── Step 4c: Import session JSON from ~/.web-to-api/imports ──
+    const importsPath = defaultImportsSourceDir(stateDir);
+    const pendingImports = findImportCandidates(importsPath);
+    if (pendingImports.length > 0) {
+      console.log(chalk.gray(`  … Importing ${pendingImports.length} session file(s) from ${importsPath}`));
+      try {
+        const importResults = await importSessionsFromDir(
+          importsPath,
+          state => browserManager.importBrowserState(state),
+          providerId => authStore.setStatus(providerId, 'active'),
+        );
+        const ok = importResults.filter(r => r.status === 'imported').length;
+        const failed = importResults.filter(r => r.status === 'error').length;
+        if (ok > 0) {
+          console.log(chalk.green('  ✓') + ` Imported sessions for ${ok} provider(s)`);
+        }
+        if (failed > 0) {
+          console.log(chalk.yellow(`  ⚠ ${failed} import(s) failed — check JSON format`));
+        }
+      } catch (err) {
+        console.log(chalk.yellow(`  ⚠ Session import failed: ${(err as Error).message}`));
+      }
+    }
+
     // ── Step 5: Create and start server ──
+    const telegramNotifier = new MutableErrorNotifier();
+    const reloadTelegramNotifier = () => {
+      const runtime = loadRuntimeSettings(stateDir);
+      telegramNotifier.set(createTelegramErrorNotifier(mergeTelegramSettings(runtime.telegram, process.env)));
+    };
+    reloadTelegramNotifier();
+
     const app = createApp({
       registry,
       authStore,
       authToken: config.server.authToken,
       stateDir,
-      errorNotifier: createTelegramErrorNotifierFromEnv(),
+      logFilePath: getLogFilePath() ?? config.logging.file,
+      errorNotifier: telegramNotifier,
+      reloadTelegramNotifier,
       getBrowserStatus: () => browserManager.getStatus(),
       importBrowserState: (state) => browserManager.importBrowserState(state),
       onLogin: async (providerId: string) => {
@@ -418,11 +463,21 @@ program
 program
   .command('uninstall-service')
   .description('Uninstall system service')
-  .action(() => {
-    console.log(chalk.yellow('uninstall-service is planned for Phase 2.'));
+  .option('--service-name <name>', 'systemd user service name', DEFAULT_SERVICE_NAME)
+  .option('--remove-env', 'also remove ~/.config/web-to-api/env')
+  .action((opts) => {
+    uninstallSystemdUserService(opts);
   });
 
 program.parse();
+
+function resolveCliPath(): string {
+  return fileURLToPath(import.meta.url);
+}
+
+function normalizeServiceName(name: string | undefined): string {
+  return String(name || DEFAULT_SERVICE_NAME).replace(/\.service$/, '');
+}
 
 function installSystemdUserService(opts: any): void {
   if (platform() !== 'linux') {
@@ -430,12 +485,14 @@ function installSystemdUserService(opts: any): void {
     process.exit(1);
   }
 
-  const serviceName = String(opts.serviceName || DEFAULT_SERVICE_NAME).replace(/\.service$/, '');
-  const repoDir = process.cwd();
-  const distCli = join(repoDir, 'dist', 'cli.js');
-  if (!existsSync(distCli)) {
-    console.log(chalk.yellow('  dist/cli.js not found. Run npm run build before installing the service.'));
+  const serviceName = normalizeServiceName(opts.serviceName);
+  const cliPath = resolveCliPath();
+  if (!existsSync(cliPath)) {
+    console.log(chalk.red(`  CLI not found: ${cliPath}`));
+    process.exit(1);
   }
+
+  const stateDir = opts.stateDir || DEFAULT_STATE_DIR;
 
   mkdirSync(DEFAULT_SERVICE_ENV_DIR, { recursive: true });
   mkdirSync(DEFAULT_SYSTEMD_USER_DIR, { recursive: true });
@@ -444,7 +501,7 @@ function installSystemdUserService(opts: any): void {
     DISPLAY: process.env.DISPLAY || ':99',
     WTA_PORT: String(opts.port || '3456'),
     WTA_HOST: opts.host || '127.0.0.1',
-    WTA_STATE_DIR: opts.stateDir || DEFAULT_STATE_DIR,
+    WTA_STATE_DIR: stateDir,
     WTA_AUTH_TOKEN: opts.authToken || process.env.WTA_AUTH_TOKEN,
     WTA_PROXY_SERVER: opts.proxyServer || process.env.WTA_PROXY_SERVER,
     WTA_PROXY_USER: opts.proxyUser || process.env.WTA_PROXY_USER,
@@ -459,7 +516,7 @@ function installSystemdUserService(opts: any): void {
   const servicePath = join(DEFAULT_SYSTEMD_USER_DIR, `${serviceName}.service`);
   const execStart = [
     process.execPath,
-    distCli,
+    cliPath,
     '--no-open',
     '--browser-mode',
     'launch',
@@ -468,7 +525,7 @@ function installSystemdUserService(opts: any): void {
     '--host',
     opts.host || '127.0.0.1',
     '--state-dir',
-    opts.stateDir || DEFAULT_STATE_DIR,
+    stateDir,
     '--chrome-profile',
     opts.chromeProfile || defaultChromeProfileDir(),
   ].map(systemdEscapeArg).join(' ');
@@ -480,7 +537,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${repoDir}
+WorkingDirectory=${stateDir}
 EnvironmentFile=${DEFAULT_SERVICE_ENV_FILE}
 ExecStart=${execStart}
 Restart=always
@@ -494,6 +551,7 @@ WantedBy=default.target
 
   console.log(chalk.green('  ✓') + ` Wrote ${servicePath}`);
   console.log(chalk.green('  ✓') + ` Wrote ${DEFAULT_SERVICE_ENV_FILE}`);
+  console.log(chalk.gray(`  CLI: ${cliPath}`));
   console.log(chalk.gray(`  Start manually: systemctl --user daemon-reload && systemctl --user enable --now ${serviceName}.service`));
 
   if (opts.enableNow) {
@@ -501,6 +559,46 @@ WantedBy=default.target
     execSync(`systemctl --user enable --now ${serviceName}.service`, { stdio: 'inherit' });
     console.log(chalk.green('  ✓') + ` Service ${serviceName}.service enabled and restarted`);
   }
+}
+
+function uninstallSystemdUserService(opts: { serviceName?: string; removeEnv?: boolean }): void {
+  if (platform() !== 'linux') {
+    console.log(chalk.red('  systemd user service uninstall is supported on Linux only.'));
+    process.exit(1);
+  }
+
+  const serviceName = normalizeServiceName(opts.serviceName);
+  const unitName = `${serviceName}.service`;
+  const servicePath = join(DEFAULT_SYSTEMD_USER_DIR, `${serviceName}.service`);
+
+  if (existsSync(servicePath)) {
+    try {
+      execSync(`systemctl --user stop ${unitName}`, { stdio: 'ignore' });
+    } catch {
+      // Service may already be stopped.
+    }
+    try {
+      execSync(`systemctl --user disable ${unitName}`, { stdio: 'ignore' });
+    } catch {
+      // Unit may not be enabled.
+    }
+    unlinkSync(servicePath);
+    console.log(chalk.green('  ✓') + ` Removed ${servicePath}`);
+  } else {
+    console.log(chalk.yellow(`  Service unit not found: ${servicePath}`));
+  }
+
+  if (opts.removeEnv) {
+    if (existsSync(DEFAULT_SERVICE_ENV_FILE)) {
+      unlinkSync(DEFAULT_SERVICE_ENV_FILE);
+      console.log(chalk.green('  ✓') + ` Removed ${DEFAULT_SERVICE_ENV_FILE}`);
+    } else {
+      console.log(chalk.yellow(`  Env file not found: ${DEFAULT_SERVICE_ENV_FILE}`));
+    }
+  }
+
+  execSync('systemctl --user daemon-reload', { stdio: 'inherit' });
+  console.log(chalk.green('  ✓') + ` Uninstalled ${unitName}`);
 }
 
 function renderEnvironmentFile(values: Record<string, string | undefined>): string {

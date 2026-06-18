@@ -204,4 +204,33 @@ describe('E2E: Server Lifecycle', () => {
     });
     expect(res2.status).toBe(200);
   });
+
+  it('dashboard config reports authRequired', async () => {
+    server = startTestServer({ authToken: 'secret' });
+    const res = await fetch(`${server.url}/dashboard/config.json`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authRequired).toBe(true);
+  });
+
+  it('dashboard config authRequired false without token', async () => {
+    server = startTestServer();
+    const res = await fetch(`${server.url}/dashboard/config.json`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.authRequired).toBe(false);
+  });
+
+  it('blocks path traversal on dashboard static files', async () => {
+    server = startTestServer();
+    const res = await fetch(`${server.url}/dashboard/../../../etc/passwd`);
+    expect(res.status).toBe(404);
+  });
+
+  it('serves dashboard static files', async () => {
+    server = startTestServer();
+    const res = await fetch(`${server.url}/dashboard/style.css`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/css');
+  });
 });

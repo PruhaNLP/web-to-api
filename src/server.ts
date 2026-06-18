@@ -13,6 +13,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// ======Settings=========
+const DASHBOARD_FILE_RE = /^[a-zA-Z0-9._-]+$/;
+// ======Settings=========
+
 export interface AppOptions {
   registry: ProviderRegistry;
   authStore: AuthStore;
@@ -23,6 +27,8 @@ export interface AppOptions {
   getLoginState?: () => LoginState;
   importBrowserState?: (state: BrowserStateImportPayload) => Promise<BrowserStateImportResult>;
   errorNotifier?: ErrorNotifier | null;
+  logFilePath?: string;
+  reloadTelegramNotifier?: () => void;
 }
 
 export function createApp(opts: AppOptions): Hono {
@@ -54,8 +60,19 @@ export function createApp(opts: AppOptions): Hono {
     }
   });
 
+  app.get('/dashboard/config.json', (c) => {
+    return c.json(
+      { authRequired: Boolean(opts.authToken) },
+      200,
+      { 'Cache-Control': 'no-store' },
+    );
+  });
+
   app.get('/dashboard/:file', (c) => {
     const file = c.req.param('file');
+    if (!DASHBOARD_FILE_RE.test(file)) {
+      return c.text('Not found', 404);
+    }
     const ext = file.split('.').pop();
     const contentType = ext === 'js' ? 'application/javascript'
       : ext === 'css' ? 'text/css'
@@ -80,6 +97,8 @@ export function createApp(opts: AppOptions): Hono {
     importBrowserState: opts.importBrowserState,
     errorNotifier: opts.errorNotifier ?? null,
     stateDir: opts.stateDir,
+    logFilePath: opts.logFilePath,
+    reloadTelegramNotifier: opts.reloadTelegramNotifier,
     startTime: Date.now(),
   };
   app.route('/', managementRoutes(mgmtDeps));

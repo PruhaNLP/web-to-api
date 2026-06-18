@@ -1,34 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { defaultStateDir } from '../config/paths.js';
+import {
+  defaultImportsSourceDir,
+  findImportCandidates,
+} from '../session/import.js';
 
 // ======Settings=========
 const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:3456';
 const DEFAULT_TIMEOUT_MS = 30_000;
-const PROVIDER_IMPORTS: Array<{ providerId: string; files: string[]; origin: string }> = [
-  { providerId: 'deepseek-web', files: ['deepseek-state.json'], origin: 'https://chat.deepseek.com' },
-  { providerId: 'kimi-web', files: ['kimi-state.json', 'kimi.json'], origin: 'https://www.kimi.com' },
-  { providerId: 'qwen-web', files: ['qwen-state.json', 'qwen.json'], origin: 'https://chat.qwen.ai' },
-];
 // ======Settings=========
-
-interface ImportState {
-  url?: string;
-  origin?: string;
-  localStorage?: Record<string, string>;
-  sessionStorage?: Record<string, string>;
-  cookies?: string | Array<Record<string, unknown>>;
-}
-
-interface ImportCandidate {
-  providerId: string;
-  filePath: string;
-  state: ImportState;
-}
-
-function defaultSourceDir(): string {
-  return process.env.WTA_STATE_DIR || join(homedir(), '.web-to-api');
-}
 
 async function main(): Promise<void> {
   const args = new Set(process.argv.slice(2));
@@ -37,8 +17,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  const stateDir = resolve(process.env.WTA_STATE_DIR || defaultStateDir());
   const bridgeUrl = normalizeBridgeUrl(process.env.WTA_COOKIE_BRIDGE_URL || DEFAULT_BRIDGE_URL);
-  const sourceDir = resolve(process.env.WTA_COOKIE_SOURCE_DIR || defaultSourceDir());
+  const sourceDir = resolve(process.env.WTA_IMPORTS_DIR || defaultImportsSourceDir(stateDir));
   const token = process.env.WTA_AUTH_TOKEN || process.env.WTA_COOKIE_AUTH_TOKEN || '';
   const timeoutMs = Number(process.env.WTA_COOKIE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
 
@@ -47,12 +28,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  const candidates = loadCandidates(sourceDir);
+  const candidates = findImportCandidates(sourceDir);
   if (candidates.length === 0) {
-    throw new Error(`No cookie state files found in ${sourceDir}`);
+    throw new Error(`No session files found in ${sourceDir}`);
   }
 
-  console.log(`Cookie refresh source: ${sourceDir}`);
+  console.log(`Imports dir: ${sourceDir}`);
   console.log(`Bridge: ${bridgeUrl}`);
 
   for (const candidate of candidates) {
@@ -65,81 +46,11 @@ async function main(): Promise<void> {
       token,
       timeoutMs,
     );
-    console.log(`${candidate.providerId}: imported ${candidate.filePath}`);
+    console.log(`${candidate.providerId}: imported ${candidate.fileName}`);
     console.log(JSON.stringify(result));
   }
 
   await printStatus(bridgeUrl, token, timeoutMs);
-}
-
-function loadCandidates(sourceDir: string): ImportCandidate[] {
-  const candidates: ImportCandidate[] = [];
-  const imported = new Set<string>();
-
-  for (const provider of PROVIDER_IMPORTS) {
-    for (const fileName of provider.files) {
-      const filePath = join(sourceDir, fileName);
-      if (!existsSync(filePath)) continue;
-      const key = `${provider.providerId}:${filePath}`;
-      if (imported.has(key)) continue;
-      imported.add(key);
-      candidates.push({
-        providerId: provider.providerId,
-        filePath,
-        state: normalizeStateFile(filePath, provider.origin),
-      });
-    }
-  }
-
-  return candidates;
-}
-
-function normalizeStateFile(filePath: string, fallbackOrigin: string): ImportState {
-  const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-
-  if (Array.isArray(parsed)) {
-    return { origin: fallbackOrigin, cookies: parsed };
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Unsupported state file format: ${filePath}`);
-  }
-
-  if (Array.isArray(parsed.cookies) && Array.isArray(parsed.origins)) {
-    return normalizePlaywrightStorageState(parsed as any, fallbackOrigin);
-  }
-
-  return {
-    url: typeof parsed.url === 'string' ? parsed.url : undefined,
-    origin: typeof parsed.origin === 'string' ? parsed.origin : fallbackOrigin,
-    localStorage: normalizeRecord((parsed as any).localStorage),
-    sessionStorage: normalizeRecord((parsed as any).sessionStorage),
-    cookies: typeof (parsed as any).cookies === 'string' || Array.isArray((parsed as any).cookies)
-      ? (parsed as any).cookies
-      : undefined,
-  };
-}
-
-function normalizePlaywrightStorageState(state: any, fallbackOrigin: string): ImportState {
-  const matchedOrigin = state.origins.find((entry: any) => entry.origin === fallbackOrigin) || state.origins[0];
-  const localStorage = Object.fromEntries(
-    (matchedOrigin?.localStorage || [])
-      .filter((entry: any) => typeof entry?.name === 'string')
-      .map((entry: any) => [entry.name, String(entry.value ?? '')]),
-  );
-
-  return {
-    origin: matchedOrigin?.origin || fallbackOrigin,
-    localStorage,
-    cookies: state.cookies,
-  };
-}
-
-function normalizeRecord(value: unknown): Record<string, string> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, val]) => [key, String(val ?? '')]),
-  );
 }
 
 async function printStatus(bridgeUrl: string, token: string, timeoutMs: number): Promise<void> {
@@ -196,20 +107,22 @@ function normalizeBridgeUrl(url: string): string {
 function printSystemdUnits(): void {
   const nodePath = process.execPath;
   const projectDir = resolve(process.cwd());
-  const sourceDir = defaultSourceDir();
+  const stateDir = defaultStateDir();
+  const sourceDir = defaultImportsSourceDir(stateDir);
   console.log(`[Unit]
-Description=Refresh web-to-api browser cookies
+Description=Refresh web-to-api session imports
 After=network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=${projectDir}
 Environment=WTA_COOKIE_BRIDGE_URL=${DEFAULT_BRIDGE_URL}
-Environment=WTA_COOKIE_SOURCE_DIR=${sourceDir}
+Environment=WTA_STATE_DIR=${stateDir}
+Environment=WTA_IMPORTS_DIR=${sourceDir}
 ExecStart=${nodePath} --import tsx src/tools/cookie-refresh.ts
 `);
   console.log(`[Unit]
-Description=Run web-to-api cookie refresh periodically
+Description=Run web-to-api session import periodically
 
 [Timer]
 OnBootSec=5min

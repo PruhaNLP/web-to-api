@@ -7,144 +7,230 @@
   <link rel="stylesheet" href="/dashboard/style.css">
 </head>
 <body>
-  <nav class="topbar">
-    <div class="topbar-brand">
-      <span class="logo">⚡</span>
-      <span class="brand-name">web-to-api</span>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-brand">
+        <span class="logo-mark">W</span>
+        <div>
+          <div class="brand-name">web-to-api</div>
+          <div class="brand-sub">OpenAI-compatible bridge</div>
+        </div>
+      </div>
+      <div class="topbar-metrics" id="topbar-metrics">
+        <span class="metric-pill"><span class="metric-label">Uptime</span><span id="metric-uptime">—</span></span>
+        <span class="metric-pill"><span class="metric-label">Browser</span><span id="metric-browser">—</span></span>
+        <span class="metric-pill"><span class="metric-label">Providers</span><span id="metric-providers">—</span></span>
+      </div>
     </div>
     <div class="topbar-status" id="server-status">
       <span class="pulse green"></span>
-      <span>Running</span>
+      <span>Online</span>
     </div>
-  </nav>
+  </header>
 
-  <main class="container">
-    <section class="card">
-      <div class="card-header">
-        <h2>API Endpoint</h2>
-        <span class="badge">OpenAI-compatible</span>
+  <div class="shell">
+    <section class="hero card">
+      <div class="hero-main">
+        <div class="hero-label">API Base URL</div>
+        <div class="url-box">
+          <code id="openai-url"></code>
+          <button class="btn-copy" data-target="openai-url">Copy</button>
+        </div>
+        <p class="hero-hint">Point any OpenAI client here · <code>/v1/chat/completions</code></p>
       </div>
-      <div class="card-body">
-        <div class="endpoint-group">
-          <label>Base URL <span class="hint">Cursor, Open WebUI, any OpenAI client</span></label>
-          <div class="url-box">
-            <code id="openai-url"></code>
-            <button class="btn-copy" data-target="openai-url">Copy</button>
+      <div class="hero-stats" id="health-info">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <div class="dashboard-grid">
+      <!-- Providers -->
+      <section class="card panel-providers">
+        <div class="card-header">
+          <h2>Providers</h2>
+          <span class="count" id="provider-count">0 / 0</span>
+        </div>
+        <div class="card-body">
+          <div class="provider-grid" id="provider-list">
+            <div class="loading">Loading providers...</div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Providers</h2>
-        <span class="count" id="provider-count">0 / 0</span>
-      </div>
-      <div class="card-body" id="provider-list">
-        <div class="loading">Loading providers...</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Operations</h2>
-      </div>
-      <div class="card-body">
-        <div class="actions-row">
-          <button class="btn-primary" id="btn-check-all">Check All (Fast)</button>
-          <button class="btn-primary" id="btn-test-all">Deep Test All</button>
-          <button class="btn-secondary" id="btn-refresh-all">Refresh All Cookies</button>
-          <button class="btn-secondary" id="btn-telegram-test">Test Telegram Alert</button>
+      <!-- Session import -->
+      <section class="card panel-import">
+        <div class="card-header">
+          <h2>Session Import</h2>
+          <span class="badge">persisted to ~/.web-to-api/imports</span>
         </div>
-        <div class="result-box" id="ops-result">No checks yet.</div>
-      </div>
-    </section>
+        <div class="card-body import-body">
+          <div class="import-row">
+            <label class="field-inline">
+              <span>Provider</span>
+              <select id="state-provider">
+                <option value="deepseek-web">DeepSeek</option>
+                <option value="qwen-web">Qwen</option>
+                <option value="kimi-web">Kimi</option>
+              </select>
+            </label>
+            <button class="btn-primary btn-import" id="btn-import-state">Import Session</button>
+          </div>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Runtime Settings</h2>
-        <span class="count">persisted in state dir</span>
-      </div>
-      <div class="card-body">
-        <label class="field-block">
-          Auto model order <span class="hint">one model id per line, top wins</span>
-          <textarea id="auto-order-input" spellcheck="false"></textarea>
-        </label>
-        <div class="actions-row">
-          <button class="btn-primary" id="btn-save-auto-order">Save Auto Order</button>
-          <button class="btn-secondary" id="btn-reset-auto-order">Reset Auto Order</button>
-          <button class="btn-danger" id="btn-restart-service">Restart Service</button>
-        </div>
-        <div class="result-box" id="settings-result">Loading settings...</div>
-      </div>
-    </section>
+          <div id="import-single" class="import-files">
+            <label class="file-drop">
+              <span class="file-drop-label">JSON file</span>
+              <input type="file" id="state-file" accept=".json,application/json">
+            </label>
+          </div>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Service Logs</h2>
-        <span class="count">journalctl</span>
-      </div>
-      <div class="card-body">
-        <div class="actions-row">
-          <button class="btn-secondary" id="btn-load-logs">Load Logs</button>
-        </div>
-        <pre class="log-box" id="service-logs">No logs loaded.</pre>
-      </div>
-    </section>
+          <div id="import-dual" class="import-files hidden">
+            <p class="import-note" id="import-dual-note">This provider needs Cookie-Editor cookies and Console state.</p>
+            <div class="import-files-grid">
+              <label class="file-drop">
+                <span class="file-drop-label">1 · Cookies (Cookie-Editor)</span>
+                <input type="file" id="state-cookies-file" accept=".json,application/json">
+              </label>
+              <label class="file-drop">
+                <span class="file-drop-label">2 · State (Console export)</span>
+                <input type="file" id="state-local-file" accept=".json,application/json">
+              </label>
+            </div>
+          </div>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Cookie / State Upload</h2>
-        <span class="count">DeepSeek · Qwen · Kimi</span>
-      </div>
-      <div class="card-body">
-        <div class="form-grid">
-          <label>
-            Provider
-            <select id="state-provider">
-              <option value="deepseek-web">DeepSeek</option>
-              <option value="qwen-web">Qwen</option>
-              <option value="kimi-web">Kimi</option>
-            </select>
-          </label>
-          <label>
-            JSON file
-            <input type="file" id="state-file" accept=".json,application/json">
-          </label>
-        </div>
-        <div class="actions-row">
-          <button class="btn-primary" id="btn-import-state">Import Selected File</button>
-        </div>
-        <div class="result-box" id="import-result">Upload a cookie array, Playwright storageState, or *-state.json.</div>
-      </div>
-    </section>
+          <div id="export-script-box" class="script-panel hidden">
+            <div class="script-header">
+              <div class="script-title">
+                <span>Console export script</span>
+                <span class="script-sub">DevTools → Console on provider site</span>
+              </div>
+              <div class="script-actions">
+                <button type="button" class="btn-secondary btn-sm" id="btn-toggle-script">Show</button>
+                <button type="button" class="btn-primary btn-sm" id="btn-copy-export-script">Copy</button>
+              </div>
+            </div>
+            <div class="script-body collapsed" id="export-script-body">
+              <pre class="script-code"><code id="export-script"></code></pre>
+            </div>
+          </div>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Session Setup</h2>
-      </div>
-      <div class="card-body guide">
-        <p><strong>Recommended:</strong> log in through the managed Chromium profile, then verify providers below.</p>
-        <ol>
-          <li>Start the server with <code>--browser-mode launch</code>.</li>
-          <li>Log in at <code>chat.deepseek.com</code>, <code>chat.qwen.ai</code>, or <code>kimi.com</code>.</li>
-          <li>Click <strong>Check All Providers</strong>, or run <code>curl http://127.0.0.1:3456/admin/health</code>.</li>
-        </ol>
-        <p><strong>Cookie files:</strong> place <code>deepseek-state.json</code>, <code>qwen.json</code>, or <code>kimi.json</code> in your state directory (<code>~/.web-to-api/</code>) and click <strong>Refresh All Cookies</strong>.</p>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>System</h2>
-      </div>
-      <div class="card-body">
-        <div class="stats-grid" id="health-info">
-          <div class="loading">Loading...</div>
+          <div class="result-box result-compact" id="import-result">Select provider and upload session JSON.</div>
         </div>
-      </div>
-    </section>
-  </main>
+      </section>
+
+      <!-- Tools sidebar -->
+      <aside class="panel-tools">
+        <section class="card tabs-card">
+          <div class="tab-bar">
+            <button type="button" class="tab-btn active" data-tab="ops">Ops</button>
+            <button type="button" class="tab-btn" data-tab="settings">Settings</button>
+            <button type="button" class="tab-btn" data-tab="logs">Logs</button>
+          </div>
+
+          <div class="tab-panel active" id="tab-ops">
+            <div class="card-body compact">
+              <div class="actions-grid">
+                <button class="btn-primary" id="btn-check-all">Check All</button>
+                <button class="btn-primary" id="btn-test-all">Deep Test</button>
+                <button class="btn-secondary" id="btn-refresh-all">Re-import Sessions</button>
+              </div>
+              <div class="result-box" id="ops-result">No checks yet.</div>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-settings">
+            <div class="card-body compact">
+              <div id="api-auth-block" class="field-block hidden">
+                <label class="field-block">
+                  API auth token
+                  <span class="hint">required with <code>--auth-token</code> · or open <code>?token=…</code> once</span>
+                  <div class="field-row">
+                    <input type="password" id="api-auth-token" class="field-input" placeholder="your bearer token" autocomplete="off">
+                    <button type="button" class="btn-secondary btn-sm" id="btn-save-api-auth">Save</button>
+                  </div>
+                </label>
+              </div>
+              <div id="api-auth-divider" class="settings-divider hidden"></div>
+
+              <label class="field-block">
+                Auto model order
+                <span class="hint">one model id per line</span>
+                <textarea id="auto-order-input" spellcheck="false" rows="5"></textarea>
+              </label>
+              <div class="actions-row">
+                <button class="btn-primary" id="btn-save-auto-order">Save order</button>
+                <button class="btn-secondary" id="btn-reset-auto-order">Reset order</button>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="field-block">
+                Telegram alerts
+                <span class="hint" id="telegram-env-hint">1 · Proxy → 2 · Verify token → 3 · Get Chat ID</span>
+              </div>
+              <div id="telegram-proxy-block">
+                <label class="field-block">
+                  HTTP proxy
+                  <span class="hint">if api.telegram.org is blocked — same format as browser proxy</span>
+                </label>
+                <div class="proxy-grid">
+                  <input type="text" id="telegram-proxy-server" class="field-input" placeholder="http://168.80.81.65:8000" spellcheck="false">
+                  <input type="text" id="telegram-proxy-user" class="field-input" placeholder="username" spellcheck="false" autocomplete="off">
+                  <input type="password" id="telegram-proxy-pass" class="field-input" placeholder="password" autocomplete="off">
+                </div>
+                <span class="hint" id="telegram-proxy-status"></span>
+              </div>
+              <label class="field-block">
+                Bot token
+                <span class="hint" id="telegram-token-hint">required on first save</span>
+                <div class="field-row">
+                  <input type="password" id="telegram-bot-token" class="field-input" placeholder="123456:ABC..." autocomplete="off">
+                  <button type="button" class="btn-secondary btn-sm" id="btn-verify-telegram-token">Verify</button>
+                </div>
+                <span class="hint" id="telegram-verify-status"></span>
+              </label>
+              <label class="field-block">
+                Chat ID
+                <span class="hint">send /start to your bot, then fetch ID</span>
+                <div class="field-row">
+                  <input type="text" id="telegram-chat-id" class="field-input" placeholder="-1001234567890" spellcheck="false">
+                  <button type="button" class="btn-secondary btn-sm" id="btn-discover-chat-id" disabled>Get ID</button>
+                </div>
+                <select id="telegram-chat-pick" class="field-input hidden"></select>
+              </label>
+              <div class="actions-row">
+                <button class="btn-primary" id="btn-save-telegram">Save Telegram</button>
+                <button class="btn-secondary" id="btn-telegram-test">Test alert</button>
+                <button class="btn-danger" id="btn-restart-service">Restart service</button>
+              </div>
+
+              <div class="result-box result-compact" id="settings-result">Loading settings...</div>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-logs">
+            <div class="card-body compact">
+              <div class="actions-row">
+                <button class="btn-secondary" id="btn-load-logs">Load Logs</button>
+              </div>
+              <pre class="log-box" id="service-logs">Open this tab to load server.log</pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="card guide-card">
+          <div class="card-header">
+            <h2>Import cheat sheet</h2>
+          </div>
+          <div class="card-body compact guide-table">
+            <div class="guide-row"><span class="guide-provider">Kimi</span><code>kimi.json</code></div>
+            <div class="guide-row"><span class="guide-provider">DeepSeek</span><code>deepseek.json</code> + <code>deepseek-state.json</code></div>
+            <div class="guide-row"><span class="guide-provider">Qwen</span><code>qwen.json</code> + <code>qwen-state.json</code></div>
+            <p class="guide-foot">Files land in <code>~/.web-to-api/imports/</code> and reload on restart.</p>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </div>
 
   <footer class="footer">
     <a href="https://github.com/linuxhsj/web-to-api" target="_blank">GitHub</a>
@@ -153,7 +239,6 @@
   </footer>
 
   <div class="toast" id="toast"></div>
-
   <script src="/dashboard/app.js"></script>
 </body>
 </html>
