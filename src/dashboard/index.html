@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>web-to-api — Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+  <nav class="topbar">
+    <div class="topbar-brand">
+      <span class="logo">⚡</span>
+      <span class="brand-name">web-to-api</span>
+    </div>
+    <div class="topbar-status" id="server-status">
+      <span class="pulse green"></span>
+      <span>Running</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <section class="card">
+      <div class="card-header">
+        <h2>API Endpoint</h2>
+        <span class="badge">OpenAI-compatible</span>
+      </div>
+      <div class="card-body">
+        <div class="endpoint-group">
+          <label>Base URL <span class="hint">Cursor, Open WebUI, any OpenAI client</span></label>
+          <div class="url-box">
+            <code id="openai-url"></code>
+            <button class="btn-copy" data-target="openai-url">Copy</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Providers</h2>
+        <span class="count" id="provider-count">0 / 0</span>
+      </div>
+      <div class="card-body" id="provider-list">
+        <div class="loading">Loading providers...</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Operations</h2>
+      </div>
+      <div class="card-body">
+        <div class="actions-row">
+          <button class="btn-primary" id="btn-check-all">Check All (Fast)</button>
+          <button class="btn-primary" id="btn-test-all">Deep Test All</button>
+          <button class="btn-secondary" id="btn-refresh-all">Refresh All Cookies</button>
+          <button class="btn-secondary" id="btn-telegram-test">Test Telegram Alert</button>
+        </div>
+        <div class="result-box" id="ops-result">No checks yet.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Runtime Settings</h2>
+        <span class="count">persisted in state dir</span>
+      </div>
+      <div class="card-body">
+        <label class="field-block">
+          Auto model order <span class="hint">one model id per line, top wins</span>
+          <textarea id="auto-order-input" spellcheck="false"></textarea>
+        </label>
+        <div class="actions-row">
+          <button class="btn-primary" id="btn-save-auto-order">Save Auto Order</button>
+          <button class="btn-secondary" id="btn-reset-auto-order">Reset Auto Order</button>
+          <button class="btn-danger" id="btn-restart-service">Restart Service</button>
+        </div>
+        <div class="result-box" id="settings-result">Loading settings...</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Service Logs</h2>
+        <span class="count">journalctl</span>
+      </div>
+      <div class="card-body">
+        <div class="actions-row">
+          <button class="btn-secondary" id="btn-load-logs">Load Logs</button>
+        </div>
+        <pre class="log-box" id="service-logs">No logs loaded.</pre>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Cookie / State Upload</h2>
+        <span class="count">DeepSeek · Qwen · Kimi</span>
+      </div>
+      <div class="card-body">
+        <div class="form-grid">
+          <label>
+            Provider
+            <select id="state-provider">
+              <option value="deepseek-web">DeepSeek</option>
+              <option value="qwen-web">Qwen</option>
+              <option value="kimi-web">Kimi</option>
+            </select>
+          </label>
+          <label>
+            JSON file
+            <input type="file" id="state-file" accept=".json,application/json">
+          </label>
+        </div>
+        <div class="actions-row">
+          <button class="btn-primary" id="btn-import-state">Import Selected File</button>
+        </div>
+        <div class="result-box" id="import-result">Upload a cookie array, Playwright storageState, or *-state.json.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Session Setup</h2>
+      </div>
+      <div class="card-body guide">
+        <p><strong>Recommended:</strong> log in through the managed Chromium profile, then verify providers below.</p>
+        <ol>
+          <li>Start the server with <code>--browser-mode launch</code>.</li>
+          <li>Log in at <code>chat.deepseek.com</code>, <code>chat.qwen.ai</code>, or <code>kimi.com</code>.</li>
+          <li>Click <strong>Check All Providers</strong>, or run <code>curl http://127.0.0.1:3456/admin/health</code>.</li>
+        </ol>
+        <p><strong>Cookie files:</strong> place <code>deepseek-state.json</code>, <code>qwen.json</code>, or <code>kimi.json</code> in your state directory (<code>~/.web-to-api/</code>) and click <strong>Refresh All Cookies</strong>.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>System</h2>
+      </div>
+      <div class="card-body">
+        <div class="stats-grid" id="health-info">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a href="https://github.com/linuxhsj/web-to-api" target="_blank">GitHub</a>
+    <span class="sep">·</span>
+    <span>web-to-api v1.0.0</span>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>

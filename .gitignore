@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Runtime state — never commit
+.web-to-api/
+web-to-api/
+*-state.json
+deepseek.json
+kimi.json
+qwen.json
+
+# Local env
+.env
+.env.*
+
+# Test artifacts
+coverage/
