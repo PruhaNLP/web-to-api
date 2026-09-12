@@ -13,7 +13,7 @@ Use DeepSeek, Kimi, and Qwen through their browser interfaces — no official AP
 1. **Install & start** (one time):
 
    ```bash
-   git clone https://github.com/linuxhsj/web-to-api.git
+   git clone https://github.com/PruhaNLP/web-to-api.git
    cd web-to-api
    npm install
    npm run build
