@@ -7,23 +7,24 @@ import { AuthStore } from '../../auth/store.js';
 import type { Page } from 'playwright-core';
 
 // ======Settings=========
-const DEEPSEEK_CONTEXT_WINDOW = 128000;
+const DEEPSEEK_CONTEXT_WINDOW = 1_000_000;
 const DEEPSEEK_MAX_OUTPUT = 8192;
+const DEEPSEEK_CLIENT_VERSION = '2.0.2';
 
 const DEEPSEEK_MODELS: ModelInfo[] = [
-  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash (Instant)', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
-  { id: 'deepseek-v4-flash-reasoner', name: 'DeepSeek V4 Flash Reasoner (Instant + Thinking)', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro (Expert)', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
-  { id: 'deepseek-v4-pro-reasoner', name: 'DeepSeek V4 Pro Reasoner (Expert + Thinking)', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
+  { id: 'deepseek-instant', name: 'DeepSeek Instant', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
+  { id: 'deepseek-instant-thinking', name: 'DeepSeek Instant Thinking', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
+  { id: 'deepseek-expert', name: 'DeepSeek Expert', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
+  { id: 'deepseek-expert-thinking', name: 'DeepSeek Expert Thinking', contextWindow: DEEPSEEK_CONTEXT_WINDOW, maxOutput: DEEPSEEK_MAX_OUTPUT },
 ];
 
 const DEEPSEEK_CLIENT_HEADERS: Record<string, string> = {
-  'x-app-version': '2.0.0',
+  'x-app-version': DEEPSEEK_CLIENT_VERSION,
   'x-client-bundle-id': 'com.deepseek.chat',
   'x-client-locale': 'en_US',
   'x-client-platform': 'web',
   'x-client-timezone-offset': '0',
-  'x-client-version': '2.0.0',
+  'x-client-version': DEEPSEEK_CLIENT_VERSION,
 };
 // ======Settings=========
 
@@ -78,8 +79,7 @@ export class DeepSeekProvider extends BaseProvider {
       const mode = resolveDeepSeekMode(req.model);
 
       // Step 1: Extract bearer token
-      // DeepSeek stores JWT in a cookie named "ds_chat_token" or via login response.
-      // Strategy: try /api/v0/users/current with cookies → intercept from page.
+      // Auth lives in localStorage (userToken / settingsJwt). ds_chat_token cookie is gone.
       let bearer = this.bearerToken;
       if (!bearer) {
         // Primary method: Intercept request headers by reloading the page.
@@ -148,9 +148,12 @@ export class DeepSeekProvider extends BaseProvider {
             return { error: `HTTP ${res.status}: ${text.substring(0, 200)}` };
           }
           const data = await res.json();
-          return {
-            sessionId: data?.data?.biz_data?.chat_session?.id || data?.data?.biz_data?.id || data?.data?.id,
-          };
+          const biz = data?.data?.biz_data || {};
+          const sessionId = biz?.chat_session?.id || biz?.id || data?.data?.id;
+          if (!sessionId) {
+            return { error: `${data?.msg || data?.message || 'no session id'} (code=${data?.code})` };
+          }
+          return { sessionId };
         } catch (e: any) {
           return { error: e.message };
         }
@@ -391,7 +394,7 @@ function resolveDeepSeekMode(modelId: string): { modelType: 'default' | 'expert'
   const normalized = modelId.toLowerCase();
   const modelType = normalized.includes('expert') || normalized.includes('pro')
     ? 'expert'
-    : 'default';
+    : 'default'; // instant / flash / default
   const thinkingEnabled = normalized.includes('reasoner') || normalized.includes('thinking');
   return { modelType, thinkingEnabled };
 }

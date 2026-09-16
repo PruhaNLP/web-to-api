@@ -220,7 +220,7 @@ describe('POST /v1/chat/completions', () => {
     ctx = createTestContext({
       providers: [
         new MockProvider('qwen-web', {
-          models: [{ id: 'qwen3.7-plus', name: 'Qwen3.7 Plus', contextWindow: 1000000, maxOutput: 8192 }],
+          models: [{ id: 'qwen3.8-max', name: 'Qwen3.8 Max', contextWindow: 1000000, maxOutput: 8192 }],
         }),
         new MockProvider('deepseek-web', {
           models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 128000, maxOutput: 8192 }],
@@ -238,7 +238,7 @@ describe('POST /v1/chat/completions', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.model).toBe('qwen-web/qwen3.7-plus');
+    expect(body.model).toBe('qwen-web/qwen3.8-max');
     expect(body.choices[0].message.content).toContain('Hello from qwen-web');
     expect(body.usage.prompt_tokens).toBeGreaterThan(0);
     expect(body.usage.estimated_context_tokens).toBe(body.usage.prompt_tokens);
@@ -251,7 +251,7 @@ describe('POST /v1/chat/completions', () => {
           models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 128000, maxOutput: 8192 }],
         }),
         new MockProvider('kimi-web', {
-          models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5', contextWindow: 200000, maxOutput: 8192 }],
+          models: [{ id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 200000, maxOutput: 8192 }],
         }),
       ],
     });
@@ -266,7 +266,7 @@ describe('POST /v1/chat/completions', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.model).toBe('kimi-web/kimi-k2.5');
+    expect(body.model).toBe('kimi-web/kimi-k2.6');
     expect(body.choices[0].message.content).toContain('Hello from kimi-web');
   });
 
@@ -312,10 +312,10 @@ describe('GET /v1/models', () => {
     ctx = createTestContext({
       providers: [
         new MockProvider('qwen-web', {
-          models: [{ id: 'qwen3.7-plus', name: 'Qwen3.7 Plus', contextWindow: 1000000, maxOutput: 8192 }],
+          models: [{ id: 'qwen3.8-max', name: 'Qwen3.8 Max', contextWindow: 1000000, maxOutput: 8192 }],
         }),
         new MockProvider('kimi-web', {
-          models: [{ id: 'kimi-k2.5', name: 'Kimi K2.5', contextWindow: 200000, maxOutput: 8192 }],
+          models: [{ id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 200000, maxOutput: 8192 }],
         }),
         new MockProvider('deepseek-web', {
           models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 128000, maxOutput: 8192 }],
@@ -326,9 +326,9 @@ describe('GET /v1/models', () => {
     const body = await res.json();
     expect(body.data.map((model: any) => model.id).slice(0, 4)).toEqual([
       'auto',
-      'qwen-web/qwen3.7-plus',
+      'qwen-web/qwen3.8-max',
       'deepseek-web/deepseek-v4-flash',
-      'kimi-web/kimi-k2.5',
+      'kimi-web/kimi-k2.6',
     ]);
   });
 });

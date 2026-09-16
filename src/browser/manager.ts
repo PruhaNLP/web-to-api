@@ -373,7 +373,7 @@ export class BrowserManager {
     // Each provider's key session cookie that indicates a valid login
     const SESSION_COOKIES: Record<string, { domain: string; cookieNames: string[] }> = {
       'deepseek-web': { domain: 'deepseek.com', cookieNames: ['ds_session_id', 'token'] },
-      'kimi-web': { domain: 'kimi.com', cookieNames: ['kimi-auth', 'access_token'] },
+      'kimi-web': { domain: 'kimi.', cookieNames: ['kimi-auth', 'access_token'] },
       'qwen-web': { domain: 'qwen.ai', cookieNames: ['cna', 'ajs_anonymous_id'] },
     };
 

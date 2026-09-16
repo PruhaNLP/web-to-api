@@ -1,1 +1,1 @@
-export const KIMI_WEB_BASE_URL = 'https://kimi.moonshot.cn';
+export const KIMI_WEB_BASE_URL = 'https://www.kimi.ai';

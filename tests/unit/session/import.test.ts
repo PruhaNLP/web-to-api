@@ -5,8 +5,8 @@ describe('session import', () => {
   it('parses cookie array export', () => {
     const state = parseStateFile([
       { name: 'kimi-auth', value: 'token123', domain: '.kimi.com', path: '/' },
-    ], 'https://www.kimi.com');
-    expect(state.origin).toBe('https://www.kimi.com');
+    ], 'https://www.kimi.ai');
+    expect(state.origin).toBe('https://www.kimi.ai');
     expect(Array.isArray(state.cookies)).toBe(true);
   });
 

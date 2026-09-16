@@ -83,6 +83,14 @@
             </label>
           </div>
 
+          <div id="import-kimi" class="import-files hidden">
+            <p class="import-note">On kimi.ai: DevTools → Console → <code>copy(localStorage.getItem('refresh_token'))</code>. Paste that JWT here. Access tokens expire in 15 minutes and are rejected.</p>
+            <label class="token-paste">
+              <span class="file-drop-label">refresh_token</span>
+              <textarea id="kimi-refresh-token" rows="4" placeholder="eyJ... refresh JWT"></textarea>
+            </label>
+          </div>
+
           <div id="import-dual" class="import-files hidden">
             <p class="import-note" id="import-dual-note">This provider needs Cookie-Editor cookies and Console state.</p>
             <div class="import-files-grid">
@@ -222,9 +230,18 @@
             <h2>Import cheat sheet</h2>
           </div>
           <div class="card-body compact guide-table">
-            <div class="guide-row"><span class="guide-provider">Kimi</span><code>kimi.json</code></div>
-            <div class="guide-row"><span class="guide-provider">DeepSeek</span><code>deepseek.json</code> + <code>deepseek-state.json</code></div>
-            <div class="guide-row"><span class="guide-provider">Qwen</span><code>qwen.json</code> + <code>qwen-state.json</code></div>
+            <div class="guide-row">
+              <span class="guide-provider">Kimi</span>
+              <span class="guide-value">paste <code>refresh_token</code></span>
+            </div>
+            <div class="guide-row">
+              <span class="guide-provider">DeepSeek</span>
+              <span class="guide-value">console <code>deepseek-state.json</code></span>
+            </div>
+            <div class="guide-row">
+              <span class="guide-provider">Qwen</span>
+              <span class="guide-value"><code>qwen.json</code> + <code>qwen-state.json</code></span>
+            </div>
             <p class="guide-foot">Files land in <code>~/.web-to-api/imports/</code> and reload on restart.</p>
           </div>
         </section>

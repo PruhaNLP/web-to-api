@@ -2,13 +2,28 @@ import { BaseProvider, type ProviderInfo, type ModelInfo, type ChatRequest, buil
 import type { StreamEvent } from '../../core/stream.js';
 import { AuthStore } from '../../auth/store.js';
 import type { Page } from 'playwright-core';
+import { KIMI_WEB_BASE_URL } from './client.js';
+
+// ======Settings=========
+const KIMI_CONTEXT_WINDOW = 256000;
+const KIMI_MAX_OUTPUT = 8192;
+const KIMI_DEFAULT_SCENARIO = 'SCENARIO_K2D5';
+const KIMI_CHAT_PATH = '/apiv2/kimi.gateway.chat.v1.ChatService/Chat';
+const KIMI_REFRESH_URL = 'https://auth.kimi.ai/api/account.gateway.v1.AuthService/RefreshToken';
+const KIMI_TOKEN_REFRESH_MARGIN_SEC = 60;
+
+const KIMI_MODELS: ModelInfo[] = [
+  { id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: KIMI_CONTEXT_WINDOW, maxOutput: KIMI_MAX_OUTPUT },
+  { id: 'kimi-k2.6-thinking', name: 'Kimi K2.6 Thinking', contextWindow: KIMI_CONTEXT_WINDOW, maxOutput: KIMI_MAX_OUTPUT },
+];
+// ======Settings=========
 
 export class KimiProvider extends BaseProvider {
   readonly info: ProviderInfo = {
     id: 'kimi-web',
     name: 'Kimi Web',
-    website: 'https://www.kimi.com',
-    loginUrl: 'https://www.kimi.com',
+    website: KIMI_WEB_BASE_URL,
+    loginUrl: KIMI_WEB_BASE_URL,
     needsBrowser: true,
   };
 
@@ -33,9 +48,7 @@ export class KimiProvider extends BaseProvider {
   }
 
   async models(): Promise<ModelInfo[]> {
-    return [
-      { id: 'kimi-k2.5', name: 'Kimi K2.5', contextWindow: 256000, maxOutput: 8192 },
-    ];
+    return KIMI_MODELS;
   }
 
   async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
@@ -46,7 +59,7 @@ export class KimiProvider extends BaseProvider {
 
     try {
       const page = this.getPage
-        ? await this.getPage('https://www.kimi.com')
+        ? await this.getPage(KIMI_WEB_BASE_URL)
         : null;
 
       if (!page) {
@@ -55,25 +68,37 @@ export class KimiProvider extends BaseProvider {
       }
 
       const prompt = buildWebPrompt(req.messages, req.featureInstruction);
-      const authCookie = (await page.context().cookies('https://www.kimi.com'))
-        .find((c) => c.name === 'kimi-auth');
-      const authToken = authCookie?.value ?? '';
+      const mode = resolveKimiMode(req.model);
+      let authToken: string;
+      try {
+        authToken = await resolveKimiAuthToken(page);
+      } catch (err) {
+        yield { type: 'error', message: (err as Error).message };
+        return;
+      }
 
       // Kimi uses Connect RPC protocol with binary framing
-      const sseResult = await page.evaluate(async (args: { prompt: string; authToken: string }) => {
+      const sseResult = await page.evaluate(async (args: {
+        prompt: string;
+        authToken: string;
+        scenario: string;
+        thinking: boolean;
+        chatPath: string;
+      }) => {
         try {
           // Build Connect RPC request body
           const payload = JSON.stringify({
-            scenario: 'SCENARIO_K2',
+            scenario: args.scenario,
             message: {
               role: 'user',
               blocks: [{
                 message_id: '',
                 text: { content: args.prompt },
               }],
-              scenario: 'SCENARIO_K2',
+              scenario: args.scenario,
             },
-            options: { thinking: false },
+            options: { thinking: args.thinking },
+            tools: [],
           });
 
           // Create binary framed payload (Connect RPC format)
@@ -95,7 +120,7 @@ export class KimiProvider extends BaseProvider {
           };
           if (args.authToken) headers['Authorization'] = `Bearer ${args.authToken}`;
 
-          const res = await fetch('https://www.kimi.com/apiv2/kimi.gateway.chat.v1.ChatService/Chat', {
+          const res = await fetch(args.chatPath, {
             method: 'POST',
             headers,
             body: frame,
@@ -150,7 +175,13 @@ export class KimiProvider extends BaseProvider {
         } catch (e: any) {
           return { error: e.message };
         }
-      }, { prompt, authToken });
+      }, {
+        prompt,
+        authToken,
+        scenario: mode.scenario,
+        thinking: mode.thinking,
+        chatPath: KIMI_CHAT_PATH,
+      });
 
       if (sseResult.error) {
         yield { type: 'error', message: `Kimi API error: ${sseResult.error}` };
@@ -161,11 +192,12 @@ export class KimiProvider extends BaseProvider {
       for (const frame of sseResult.frames || []) {
         try {
           const parsed = JSON.parse(frame);
-          // Kimi response has event field and data
           if (parsed?.event === 'resp' && parsed?.text) {
             yield { type: 'text_delta', delta: parsed.text };
           } else if (parsed?.event === 'all_done' || parsed?.event === 'cmpl') {
             yield { type: 'done', reason: 'stop' };
+          } else if (parsed?.delta?.content) {
+            yield { type: 'text_delta', delta: parsed.delta.content };
           } else if (parsed?.result?.text) {
             yield { type: 'text_delta', delta: parsed.result.text };
           } else if (parsed?.block?.text?.content) {
@@ -174,7 +206,6 @@ export class KimiProvider extends BaseProvider {
             yield { type: 'done', reason: 'stop' };
           }
         } catch {
-          // If frame is plain text, emit as delta
           if (frame.length > 0 && !frame.startsWith('{')) {
             yield { type: 'text_delta', delta: frame };
           }
@@ -184,4 +215,62 @@ export class KimiProvider extends BaseProvider {
       yield { type: 'error', message: `Kimi provider error: ${(err as Error).message}` };
     }
   }
+}
+
+async function resolveKimiAuthToken(page: Page): Promise<string> {
+  const stored = await page.evaluate(() => ({
+    access: localStorage.getItem('access_token') || '',
+    refresh: localStorage.getItem('refresh_token') || '',
+  })).catch(() => ({ access: '', refresh: '' }));
+
+  if (!stored.refresh) {
+    throw new Error('Kimi: paste refresh_token from kimi.ai. Access tokens are not accepted.');
+  }
+  if (stored.access && !isJwtExpired(stored.access, KIMI_TOKEN_REFRESH_MARGIN_SEC)) {
+    return stored.access;
+  }
+
+  const refreshed = await page.evaluate(async (args: { refreshToken: string; refreshUrl: string }) => {
+    try {
+      const res = await fetch(args.refreshUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Connect-Protocol-Version': '1',
+        },
+        body: JSON.stringify({ refresh_token: args.refreshToken }),
+      });
+      const text = await res.text();
+      if (!res.ok) return { error: `HTTP ${res.status}: ${text.substring(0, 200)}` };
+      const data = JSON.parse(text);
+      const access = data.access_token || data.accessToken || '';
+      const refresh = data.refresh_token || data.refreshToken || args.refreshToken;
+      if (!access) return { error: 'refresh returned no access_token' };
+      localStorage.setItem('access_token', access);
+      localStorage.setItem('refresh_token', refresh);
+      return { access };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }, { refreshToken: stored.refresh, refreshUrl: KIMI_REFRESH_URL });
+
+  if (refreshed.access) return refreshed.access;
+  throw new Error(`Kimi refresh failed: ${refreshed.error || 'unknown error'}`);
+}
+
+function isJwtExpired(token: string, marginSec: number): boolean {
+  const parts = token.split('.');
+  if (parts.length < 2) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (typeof payload.exp !== 'number') return false;
+    return payload.exp <= Math.floor(Date.now() / 1000) + marginSec;
+  } catch {
+    return false;
+  }
+}
+
+function resolveKimiMode(modelId: string): { scenario: string; thinking: boolean } {
+  const thinking = modelId.toLowerCase().includes('thinking') || modelId.toLowerCase().includes('reasoner');
+  return { scenario: KIMI_DEFAULT_SCENARIO, thinking };
 }

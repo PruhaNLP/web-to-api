@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -16,8 +16,7 @@ describe('import persistence', () => {
   });
 
   it('resolves dual-import filenames', () => {
-    expect(resolveImportPersistFilename('deepseek-web', 'cookies')).toBe('deepseek.json');
-    expect(resolveImportPersistFilename('deepseek-web', 'state')).toBe('deepseek-state.json');
+    expect(resolveImportPersistFilename('deepseek-web', 'single')).toBe('deepseek-state.json');
     expect(resolveImportPersistFilename('kimi-web', 'single')).toBe('kimi.json');
   });
 
@@ -29,19 +28,16 @@ describe('import persistence', () => {
     expect(JSON.parse(readFileSync(saved, 'utf-8'))).toEqual([{ name: 'kimi-auth', value: 'x' }]);
   });
 
-  it('finds merged deepseek dual-import candidates', () => {
+  it('finds deepseek state import candidates', () => {
     dir = mkdtempSync(join(tmpdir(), 'wta-import-'));
-    const imports = join(dir, 'imports');
-    persistImportRawFile(dir, 'deepseek.json', [{ name: 'ds_session_id', value: '1' }]);
     persistImportRawFile(dir, 'deepseek-state.json', {
       origin: 'https://chat.deepseek.com',
       localStorage: { userToken: 'jwt' },
     });
-    const candidates = findImportCandidates(imports);
+    const candidates = findImportCandidates(join(dir, 'imports'));
     expect(candidates).toHaveLength(1);
     expect(candidates[0].providerId).toBe('deepseek-web');
-    expect(candidates[0].fileName).toContain('deepseek.json');
+    expect(candidates[0].fileName).toBe('deepseek-state.json');
     expect(candidates[0].state.localStorage?.userToken).toBe('jwt');
-    expect(existsSync(join(imports, 'deepseek.json'))).toBe(true);
   });
 });

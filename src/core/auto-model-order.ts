@@ -1,14 +1,14 @@
 // ======Settings=========
 export const AUTO_MODEL_ID = 'auto';
 const DEFAULT_AUTO_MODEL_ORDER = [
-  'deepseek-web/deepseek-v4-pro-reasoner',
+  'deepseek-web/deepseek-expert-thinking',
+  'qwen-web/qwen3.8-max',
+  'deepseek-web/deepseek-instant-thinking',
+  'deepseek-web/deepseek-expert',
+  'deepseek-web/deepseek-instant',
+  'kimi-web/kimi-k2.6',
   'qwen-web/qwen3.7-plus',
-  'deepseek-web/deepseek-v4-flash-reasoner',
-  'deepseek-web/deepseek-v4-pro',
-  'deepseek-web/deepseek-v4-flash',
-  'kimi-web/kimi-k2.5',
   'qwen-web/qwen3.7-max',
-  'qwen-web/qwen3.6-plus',
 ];
 // ======Settings=========
 

@@ -7,19 +7,22 @@ import type { Page } from 'playwright-core';
 // ======Settings=========
 const QWEN_CONTEXT_WINDOW = 1_000_000;
 const QWEN_MAX_OUTPUT = 8192;
-const QWEN_DEFAULT_MODEL = 'qwen3.7-plus';
+const QWEN_DEFAULT_MODEL = 'qwen3.8-max';
+const QWEN_SPA_VERSION = '0.2.66';
 const QWEN_RESPONSE_TIMEOUT_MS = 90_000;
 const QWEN_KNOWN_MODELS: ModelInfo[] = [
+  { id: 'qwen3.8-max', name: 'Qwen3.8-Max', contextWindow: QWEN_CONTEXT_WINDOW, maxOutput: 81_920 },
   { id: 'qwen3.7-plus', name: 'Qwen3.7-Plus', contextWindow: QWEN_CONTEXT_WINDOW, maxOutput: 65_536 },
   { id: 'qwen3.7-max', name: 'Qwen3.7-Max', contextWindow: QWEN_CONTEXT_WINDOW, maxOutput: 81_920 },
   { id: 'qwen3.6-plus', name: 'Qwen3.6-Plus', contextWindow: QWEN_CONTEXT_WINDOW, maxOutput: 65_536 },
 ];
 const QWEN_MODEL_ALIASES: Record<string, string> = {
+  'qwen3-8-max': 'qwen3.8-max',
   'qwen3-7-plus': 'qwen3.7-plus',
   'qwen3-7-max': 'qwen3.7-max',
   'qwen3-6-plus': 'qwen3.6-plus',
-  'qwen-3.5-plus': 'qwen3.7-plus',
-  qwq: 'qwen3.7-plus',
+  'qwen-3.5-plus': 'qwen3.8-max',
+  qwq: 'qwen3.8-max',
 };
 // ======Settings=========
 
@@ -130,12 +133,12 @@ export class QwenProvider extends BaseProvider {
 }
 
 async function loadQwenModels(page: Page): Promise<ModelInfo[]> {
-  const liveModels = await page.evaluate(async () => {
+  const liveModels = await page.evaluate(async (spaVersion: string) => {
     const token = localStorage.getItem('token') || '';
     const headers: Record<string, string> = {
       Accept: 'application/json, text/plain, */*',
       source: 'web',
-      version: '0.2.64',
+      version: spaVersion,
       timezone: new Date().toUTCString(),
       'x-request-id': crypto.randomUUID(),
     };
@@ -157,7 +160,7 @@ async function loadQwenModels(page: Page): Promise<ModelInfo[]> {
       chatType: model.info?.meta?.chat_type || [],
       modality: model.info?.meta?.modality || [],
     }));
-  });
+  }, QWEN_SPA_VERSION);
 
   const mapped = liveModels
     .filter((model: any) => typeof model.id === 'string' && model.id.length > 0)
@@ -201,7 +204,7 @@ async function selectQwenModel(page: Page, modelName: string): Promise<void> {
   if (modelName === QWEN_DEFAULT_MODEL) return;
   const displayName = qwenModelCache?.find(model => model.id === modelName)?.name || formatQwenModelName(modelName);
   // The fetch interceptor below also patches model payloads. This only keeps the visible UI in sync when the dropdown is usable.
-  await page.getByText(/Qwen3\.[67]-Plus|Qwen3\.7-Max/i).first().click({ timeout: 3000 }).catch(() => {});
+  await page.getByText(/Qwen3\.[678]-Plus|Qwen3\.[78]-Max/i).first().click({ timeout: 3000 }).catch(() => {});
   await page.getByText(displayName, { exact: false }).first().click({ timeout: 3000 }).catch(() => {});
   await page.getByText(modelName, { exact: false }).first().click({ timeout: 3000 }).catch(() => {});
 }

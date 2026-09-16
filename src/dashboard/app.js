@@ -76,18 +76,10 @@ async function saveApiAuthToken() {
 var providerOrigins = {
   'deepseek-web': 'https://chat.deepseek.com',
   'qwen-web': 'https://chat.qwen.ai',
-  'kimi-web': 'https://www.kimi.com',
+  'kimi-web': 'https://www.kimi.ai',
 };
 
 var DUAL_IMPORT_RULES = {
-  'deepseek-web': {
-    label: 'DeepSeek',
-    validateCookies: validateDeepSeekCookies,
-    validateState: validateDeepSeekState,
-    cookiesError: 'Cookies file must be a Cookie-Editor JSON array with ds_session_id or ds_chat_token',
-    stateError: 'State file must include localStorage.userToken or localStorage.settingsJwt',
-    dualNote: 'DeepSeek needs both files. Cookie-Editor alone is not enough — you also need localStorage JWT from the console export.',
-  },
   'qwen-web': {
     label: 'Qwen',
     validateCookies: validateQwenCookies,
@@ -156,6 +148,7 @@ function buildConsoleExportScript(downloadName) {
 var exportScriptNames = {
   'deepseek-web': 'deepseek-state.json',
   'qwen-web': 'qwen-state.json',
+  'kimi-web': 'kimi-refresh',
 };
 
 var modelsByProvider = {};
@@ -877,7 +870,9 @@ async function importSelectedStateFile() {
   var box = document.getElementById('import-result');
 
   try {
-    if (DUAL_IMPORT_RULES[providerId]) {
+    if (providerId === 'kimi-web') {
+      await importKimiRefreshToken(box);
+    } else if (DUAL_IMPORT_RULES[providerId]) {
       await importDualProvider(box, providerId);
     } else {
       await importSingleFile(box, providerId);
@@ -927,6 +922,33 @@ async function importDualProvider(box, providerId) {
   box.textContent = JSON.stringify(result, null, 2);
 }
 
+function parseKimiRefreshToken(raw) {
+  var token = String(raw || '').trim().replace(/^['"]|['"]$/g, '');
+  if (!token) throw new Error('Paste refresh_token from kimi.ai');
+  var parts = token.split('.');
+  if (parts.length < 2) throw new Error('Not a JWT. Copy localStorage.getItem("refresh_token")');
+  try {
+    var payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (payload.typ === 'access') {
+      throw new Error('This is access_token (~15 min). Paste refresh_token instead');
+    }
+  } catch (err) {
+    if (err.message && err.message.indexOf('access_token') !== -1) throw err;
+  }
+  return token;
+}
+
+async function importKimiRefreshToken(box) {
+  var token = parseKimiRefreshToken(document.getElementById('kimi-refresh-token').value);
+  box.textContent = 'Saving Kimi refresh_token...';
+  var raw = { origin: 'https://www.kimi.ai', localStorage: { refresh_token: token, access_token: '' } };
+  var result = await postImportState('kimi-web', raw, {
+    raw: raw,
+    persistKind: 'single',
+  });
+  box.textContent = JSON.stringify(result, null, 2);
+}
+
 async function importSingleFile(box, providerId) {
   var input = document.getElementById('state-file');
   if (!input.files || input.files.length === 0) {
@@ -937,6 +959,9 @@ async function importSingleFile(box, providerId) {
   box.textContent = 'Reading ' + file.name + '...';
   var parsed = JSON.parse(await file.text());
   var state = normalizeStateFile(parsed, providerId);
+  if (providerId === 'deepseek-web' && !state.localStorage?.userToken && !state.localStorage?.settingsJwt) {
+    throw new Error('Need Console export with localStorage.userToken or settingsJwt. Cookie-Editor is not enough anymore.');
+  }
   var result = await postImportState(providerId, state, {
     raw: parsed,
     persistKind: 'single',
@@ -987,8 +1012,10 @@ function updateImportForm() {
   var providerId = document.getElementById('state-provider').value;
   var dualRules = DUAL_IMPORT_RULES[providerId];
   var dual = Boolean(dualRules);
-  document.getElementById('import-single').classList.toggle('hidden', dual);
+  var isKimi = providerId === 'kimi-web';
+  document.getElementById('import-single').classList.toggle('hidden', dual || isKimi);
   document.getElementById('import-dual').classList.toggle('hidden', !dual);
+  document.getElementById('import-kimi').classList.toggle('hidden', !isKimi);
   if (dualRules) {
     document.getElementById('import-dual-note').textContent = dualRules.dualNote;
   }
@@ -997,7 +1024,9 @@ function updateImportForm() {
   var scriptName = exportScriptNames[providerId];
   if (scriptName) {
     scriptBox.classList.remove('hidden');
-    document.getElementById('export-script').textContent = buildConsoleExportScript(scriptName);
+    document.getElementById('export-script').textContent = providerId === 'kimi-web'
+      ? "copy(localStorage.getItem('refresh_token'))"
+      : buildConsoleExportScript(scriptName);
     var body = document.getElementById('export-script-body');
     var toggleBtn = document.getElementById('btn-toggle-script');
     body.classList.add('collapsed');
@@ -1007,8 +1036,8 @@ function updateImportForm() {
   }
 
   var hints = {
-    'deepseek-web': 'Upload Cookie-Editor cookies + Console state (two files).',
-    'kimi-web': 'Cookie-Editor JSON array with kimi-auth.',
+    'deepseek-web': 'Upload Console state JSON. Cookie-Editor no longer has the login token.',
+    'kimi-web': 'Paste refresh_token only. Access tokens are rejected.',
     'qwen-web': 'Upload Cookie-Editor cookies + Console state (two files).',
   };
   document.getElementById('import-result').textContent = hints[providerId] || 'Select provider and upload session JSON.';

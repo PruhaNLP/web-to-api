@@ -10,12 +10,14 @@ describe('buildWebPrompt', () => {
     expect(buildWebPrompt(messages)).toBe('你好');
   });
 
-  it('drops system messages', () => {
+  it('keeps system messages as standing instructions', () => {
     const messages: Message[] = [
-      { role: 'system', content: 'You are an AI assistant with tools...' },
+      { role: 'system', content: 'You are a helpful coding assistant.' },
       { role: 'user', content: '你好' },
     ];
-    expect(buildWebPrompt(messages)).toBe('你好');
+    const prompt = buildWebPrompt(messages);
+    expect(prompt).toContain('<system_instructions>\nYou are a helpful coding assistant.\n</system_instructions>');
+    expect(prompt).toContain('你好');
   });
 
   it('strips agent-framework timestamp prefix from user message', () => {
@@ -43,7 +45,9 @@ Sender (untrusted metadata):
 [Mon 2026-04-06 21:46 GMT+8] 王者荣耀是哪个公司的？你是哪个公司的？`,
       },
     ];
-    expect(buildWebPrompt(messages)).toBe('王者荣耀是哪个公司的？你是哪个公司的？');
+    const prompt = buildWebPrompt(messages);
+    expect(prompt).toContain('You are an AI agent with tools...');
+    expect(prompt).toContain('王者荣耀是哪个公司的？你是哪个公司的？');
   });
 
   it('packs multi-turn conversation context into one explicit prompt', () => {
@@ -82,7 +86,29 @@ Sender (untrusted metadata):
     ];
     const prompt = buildWebPrompt(messages);
     expect(prompt).toContain('### Turn 1: User\n搜索天气');
-    expect(prompt).toContain('### Turn 2: Tool result\n{"result": "晴天"}');
+    expect(prompt).toContain('### Turn 2: Tool result\ntool_call_id=123\n{"result": "晴天"}');
+    expect(prompt).toContain('Latest user message:\n谢谢');
+  });
+
+  it('keeps assistant tool calls in conversation context', () => {
+    const messages: Message[] = [
+      { role: 'user', content: '搜索天气' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'search', arguments: '{"query":"weather"}' },
+        }],
+      },
+      { role: 'tool', content: '{"result":"晴天"}', tool_call_id: 'call_1' },
+      { role: 'user', content: '谢谢' },
+    ];
+    const prompt = buildWebPrompt(messages);
+    expect(prompt).toContain('{"tool_calls":[{"name":"search","arguments":{"query":"weather"}}]}');
+    expect(prompt).toContain('tool_call_id=call_1');
+    expect(prompt).toContain('{"result":"晴天"}');
     expect(prompt).toContain('Latest user message:\n谢谢');
   });
 

@@ -20,6 +20,12 @@ describe('Kimi stream normalizer', () => {
     expect(events).toEqual([{ type: 'done', reason: 'stop' }]);
   });
 
+  it('parses text delta from Connect RPC delta.content', () => {
+    const line = 'data: {"delta":{"content":"Hello"}}';
+    const events = normalizeKimiSSE(line);
+    expect(events).toEqual([{ type: 'text_delta', delta: 'Hello' }]);
+  });
+
   it('parses text delta from standard SSE format', () => {
     const line = 'data: {"choices":[{"delta":{"content":"World"}}]}';
     const events = normalizeKimiSSE(line);

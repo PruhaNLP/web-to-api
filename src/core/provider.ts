@@ -22,10 +22,22 @@ export interface ModelInfo {
   maxOutput: number;
 }
 
+export interface MessageToolCall {
+  id?: string;
+  type?: string;
+  name?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+  arguments?: unknown;
+}
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | unknown;
   tool_call_id?: string;
+  tool_calls?: MessageToolCall[];
   reasoning_content?: string;
 }
 
@@ -85,24 +97,37 @@ export function extractContextText(message: Pick<Message, 'role' | 'content' | '
 
 /**
  * Build a single prompt for web chat UIs from OpenAI-style messages.
- * System messages are dropped; assistant/tool turns become transcript context.
+ * System instructions stay as standing rules; assistant/tool turns become transcript context.
  */
 export function buildWebPrompt(messages: Message[], featureInstruction = ''): string {
+  const systemText = messages
+    .filter(msg => msg.role === 'system')
+    .map(msg => extractText(msg.content).trim())
+    .filter(Boolean)
+    .join('\n\n');
+  const systemBlock = systemText
+    ? `<system_instructions>\n${systemText}\n</system_instructions>\n\n`
+    : '';
+
   const turns: Array<{ role: 'User' | 'Assistant' | 'Tool result'; content: string }> = [];
 
   for (const msg of messages) {
     if (msg.role === 'system') continue;
 
     const text = extractContextText(msg);
-    if (!text) continue;
 
     if (msg.role === 'assistant') {
-      turns.push({ role: 'Assistant', content: text.trim() });
+      const toolCalls = formatAssistantToolCalls(msg.tool_calls);
+      const content = [text.trim(), toolCalls].filter(Boolean).join('\n');
+      if (content) turns.push({ role: 'Assistant', content });
       continue;
     }
 
+    if (!text) continue;
+
     if (msg.role === 'tool') {
-      turns.push({ role: 'Tool result', content: text.trim() });
+      const prefix = msg.tool_call_id ? `tool_call_id=${msg.tool_call_id}\n` : '';
+      turns.push({ role: 'Tool result', content: `${prefix}${text.trim()}` });
       continue;
     }
 
@@ -116,15 +141,17 @@ export function buildWebPrompt(messages: Message[], featureInstruction = ''): st
     ? `\n\n<available_tools_and_output_contract>\n${featureInstruction}\n</available_tools_and_output_contract>`
     : '';
 
-  if (turns.length === 0) return featureInstruction;
-  if (turns.length === 1 && turns[0].role === 'User') return `${turns[0].content}${instructionBlock}`;
+  if (turns.length === 0) return `${systemBlock}${featureInstruction}`.trim();
+  if (turns.length === 1 && turns[0].role === 'User') {
+    return `${systemBlock}${turns[0].content}${instructionBlock}`.trim();
+  }
 
   const latestUser = [...turns].reverse().find(turn => turn.role === 'User')?.content ?? turns[turns.length - 1].content;
   const transcript = turns
     .map((turn, index) => `### Turn ${index + 1}: ${turn.role}\n${turn.content}`)
     .join('\n\n');
 
-  return `${CONTEXT_PROMPT_HEADER}
+  return `${systemBlock}${CONTEXT_PROMPT_HEADER}
 
 <conversation_context>
 ${transcript}
@@ -132,6 +159,29 @@ ${transcript}
 
 Latest user message:
 ${latestUser}${instructionBlock}`;
+}
+
+function formatAssistantToolCalls(toolCalls: MessageToolCall[] | undefined): string {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+
+  const calls = toolCalls
+    .map((call) => {
+      const name = call.function?.name ?? call.name ?? '';
+      if (!name) return null;
+      let args: unknown = call.function?.arguments ?? call.arguments ?? {};
+      if (typeof args === 'string') {
+        try {
+          args = JSON.parse(args);
+        } catch {
+          // Keep the raw argument string if it is not JSON.
+        }
+      }
+      return { name, arguments: args };
+    })
+    .filter((call): call is { name: string; arguments: unknown } => call !== null);
+
+  if (calls.length === 0) return '';
+  return JSON.stringify({ tool_calls: calls });
 }
 
 export function estimateContextTokens(messages: Message[], featureInstruction = ''): number {

@@ -4,6 +4,8 @@ Turn free web AI chat sessions into a **local OpenAI-compatible API**.
 
 Use DeepSeek, Kimi, and Qwen through their browser interfaces — no official API keys required. Any tool that speaks the OpenAI Chat Completions API (Cursor, Open WebUI, custom scripts) can connect to `http://127.0.0.1:3456/v1`.
 
+**The project is maintained.** This update retargets the adapters to the current DeepSeek, Kimi, and Qwen site APIs and session formats.
+
 **Most people never touch the CLI after install** — everything runs through the built-in **Web Dashboard** at `http://127.0.0.1:3456`.
 
 ![Web dashboard — providers, session import, ops](img/ui_demo.jpg)
@@ -25,9 +27,9 @@ Use DeepSeek, Kimi, and Qwen through their browser interfaces — no official AP
 2. **Copy the API URL** — top bar shows `http://127.0.0.1:3456/v1`. Click **Copy** and paste it into Cursor, Open WebUI, or any OpenAI client. API key can be anything (e.g. `local`).
 
 3. **Import your login** — middle panel **Session Import**:
-   - Pick a provider (DeepSeek / Kimi / Qwen).
-   - On the provider site in your normal browser: DevTools → Console → run the **Console Export** script (Show → Copy in the dashboard).
-   - Upload the exported files (cookies + state where needed).
+   - **Kimi** — on kimi.ai run `copy(localStorage.getItem('refresh_token'))` and paste that JWT. Access tokens (~15 min) are rejected.
+   - **DeepSeek** — DevTools → Console → **Console Export**. Auth is `userToken` / `settingsJwt` in localStorage (`deepseek-state.json`). Cookie-Editor no longer has the JWT.
+   - **Qwen** — Cookie-Editor `qwen.json` **and** Console state `qwen-state.json`.
    - Click **Import Session** — saved to `~/.web-to-api/imports/` and applied immediately.
 
 4. **Check it works** — right panel **Ops** tab → **Check All** or **Deep Test**. Green = ready.
@@ -57,7 +59,7 @@ Your client (OpenAI SDK, Cursor, curl, …)
   → http://127.0.0.1:3456/v1
   → web-to-api
   → Playwright Chromium (saved login session)
-  → chat.deepseek.com / kimi.com / chat.qwen.ai
+  → chat.deepseek.com / kimi.ai / chat.qwen.ai
 ```
 
 The server reuses your browser cookies and session state. It does not store vendor API keys.
@@ -66,7 +68,7 @@ The server reuses your browser cookies and session state. It does not store vend
 
 - **Web dashboard** — visual setup: session import, health, ops, settings, logs (no CLI required for day-to-day use)
 - **OpenAI-compatible API** — `GET /v1/models`, `POST /v1/chat/completions` (stream + non-stream)
-- **Three providers** — DeepSeek (4 models), Kimi, Qwen
+- **Three providers** — DeepSeek Instant/Expert (± thinking), Kimi K2.6 (± thinking), Qwen 3.8 / 3.7 / 3.6
 - **`auto` model** — tries models in order until one succeeds
 - **Pseudo tool calls** — prompt-based tool calling for clients that expect OpenAI `tool_calls`
 - **Structured output** — `response_format` via prompt + JSON parse
@@ -80,7 +82,7 @@ The dashboard is the main interface. After `npm run dev`, open **http://127.0.0.
 
 **Providers (left)** — see which sites are logged in, pick a model from the dropdown, **Copy ID** for your client config.
 
-**Session Import (center)** — upload cookies/state per provider. The built-in **Console Export** script collects everything from DevTools; files land in `~/.web-to-api/imports/` and reload on restart.
+**Session Import (center)** — Kimi: paste `refresh_token`. DeepSeek: one Console state file. Qwen: cookies + Console state. Files land in `~/.web-to-api/imports/` and reload on restart.
 
 **Right panel**
 - **Ops** — Check All, Deep Test, Re-import Sessions, Telegram test
@@ -184,11 +186,13 @@ console.log(res.choices[0].message.content);
 | Model ID | Provider |
 |----------|----------|
 | `auto` | Fallback chain (recommended) |
-| `deepseek-web/deepseek-v4-flash` | DeepSeek |
-| `deepseek-web/deepseek-v4-flash-reasoner` | DeepSeek |
-| `deepseek-web/deepseek-v4-pro` | DeepSeek |
-| `deepseek-web/deepseek-v4-pro-reasoner` | DeepSeek |
-| `kimi-web/kimi-k2.5` | Kimi |
+| `deepseek-web/deepseek-instant` | DeepSeek |
+| `deepseek-web/deepseek-instant-thinking` | DeepSeek |
+| `deepseek-web/deepseek-expert` | DeepSeek |
+| `deepseek-web/deepseek-expert-thinking` | DeepSeek |
+| `kimi-web/kimi-k2.6` | Kimi |
+| `kimi-web/kimi-k2.6-thinking` | Kimi |
+| `qwen-web/qwen3.8-max` | Qwen |
 | `qwen-web/qwen3.7-plus` | Qwen |
 | `qwen-web/qwen3.7-max` | Qwen |
 | `qwen-web/qwen3.6-plus` | Qwen |
@@ -219,9 +223,10 @@ Runtime files never live in the project root.
   settings.json                # auto model order, Telegram alerts, etc.
   logs/
   imports/                     # drop session JSON here
-    deepseek.json
-    kimi.json
-    qwen.json
+    deepseek-state.json        # Console localStorage (userToken / settingsJwt)
+    kimi.json                  # refresh_token only
+    qwen.json                  # Cookie-Editor
+    qwen-state.json            # Console localStorage
 
 ~/web-to-api/
   chrome-profile/              # persistent login when you have a display
@@ -233,16 +238,16 @@ On startup the server auto-imports any files found in `imports/`.
 
 | Provider | Headless (no VNC) | Import file | What must be in the export |
 |----------|-------------------|-------------|----------------------------|
-| **DeepSeek** | ✅ import or profile | `deepseek.json` | Cookies **+** localStorage JWT (`userToken` / `settingsJwt`). Cookie-only often fails |
-| **Kimi** | ✅ import | `kimi.json` | Cookie `kimi-auth` (Bearer token). Cookie array is enough |
-| **Qwen** | ✅ import | `qwen.json` | Cookies + localStorage (Playwright `storageState` best). No VNC if export is complete |
+| **DeepSeek** | ✅ import or profile | `deepseek-state.json` | Console localStorage (`userToken` / `settingsJwt`). Cookie-Editor no longer has the JWT |
+| **Kimi** | ✅ import | paste `refresh_token` | `localStorage.refresh_token` from kimi.ai. Access JWT (~15 min) is rejected |
+| **Qwen** | ✅ import | `qwen.json` + `qwen-state.json` | Cookie-Editor cookies **and** Console localStorage (`token`) |
 
 **Headless workflow (proven):**
 
-1. On any machine with a browser, export session (Cookie Editor array, or Playwright `storageState`).
-2. Copy to `~/.web-to-api/imports/qwen.json` (and `kimi.json`, `deepseek.json`).
+1. Export each provider as in the table above (Kimi: refresh JWT text; DeepSeek: Console state; Qwen: cookies + state).
+2. Copy to `~/.web-to-api/imports/` (`kimi.json`, `deepseek-state.json`, `qwen.json` + `qwen-state.json`).
 3. Start server — auto-import on boot — or run `npm run cookies:refresh`.
-4. Smoke: `curl …/v1/chat/completions` with `"model": "qwen-web/qwen3.7-plus"`.
+4. Smoke: `curl …/v1/chat/completions` with `"model": "qwen-web/qwen3.8-max"`.
 
 **With a display** (local PC): you can also log in via Dashboard → Login or use a persistent Chrome profile at `~/web-to-api/chrome-profile/`.
 
@@ -332,7 +337,7 @@ This project automates free web chat UIs. That works, but it comes with real tra
 - **Session cookies = full account access.** Anyone with your state dir, Chrome profile, or an open API port can use your logged-in sessions.
 - Default bind is localhost, but `--host 0.0.0.0` without `--auth-token` exposes your sessions to the network.
 - The dashboard and `/admin/*` routes can import cookies and trigger logins. Protect them the same way as the API.
-- Do **not** commit `*-state.json`, `deepseek.json`, `kimi.json`, `qwen.json`, or Chrome profile directories. They contain live session material.
+- Do **not** commit `deepseek-state.json`, `kimi.json`, `qwen.json`, `qwen-state.json`, or Chrome profile directories. They contain live session material.
 - Proxy credentials in env vars or systemd units must stay off public repos and shared logs.
 
 ### Operational issues

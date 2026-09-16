@@ -17,6 +17,10 @@ export function normalizeKimiSSE(line: string): StreamEvent[] {
     return [{ type: 'text_delta', delta: parsed.text }];
   }
 
+  if (parsed.delta?.content) {
+    return [{ type: 'text_delta', delta: parsed.delta.content }];
+  }
+
   // Also support standard format
   const choice = parsed.choices?.[0];
   if (choice) {
