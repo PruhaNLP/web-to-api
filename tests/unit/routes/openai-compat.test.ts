@@ -273,7 +273,7 @@ describe('POST /v1/chat/completions', () => {
   it('accepts streaming auto requests while using non-stream fallback internally', async () => {
     ctx = createTestContext({
       providers: [new MockProvider('deepseek-web', {
-        models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 128000, maxOutput: 8192 }],
+        models: [{ id: 'deepseek-instant', name: 'DeepSeek Instant', contextWindow: 128000, maxOutput: 8192 }],
       })],
     });
     const res = await ctx.app.request('/v1/chat/completions', {
@@ -287,7 +287,7 @@ describe('POST /v1/chat/completions', () => {
     });
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).toContain('"model":"deepseek-web/deepseek-v4-flash"');
+    expect(text).toContain('"model":"deepseek-web/deepseek-instant"');
     expect(text).toContain('Hello from deepseek-web');
     expect(text).toContain('data: [DONE]');
   });
@@ -318,7 +318,7 @@ describe('GET /v1/models', () => {
           models: [{ id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 200000, maxOutput: 8192 }],
         }),
         new MockProvider('deepseek-web', {
-          models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 128000, maxOutput: 8192 }],
+          models: [{ id: 'deepseek-instant', name: 'DeepSeek Instant', contextWindow: 128000, maxOutput: 8192 }],
         }),
       ],
     });
@@ -327,7 +327,7 @@ describe('GET /v1/models', () => {
     expect(body.data.map((model: any) => model.id).slice(0, 4)).toEqual([
       'auto',
       'qwen-web/qwen3.8-max',
-      'deepseek-web/deepseek-v4-flash',
+      'deepseek-web/deepseek-instant',
       'kimi-web/kimi-k2.6',
     ]);
   });
